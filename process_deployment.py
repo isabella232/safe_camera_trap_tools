@@ -87,7 +87,8 @@ def process_deployment(image_dirs, location, output_root, calib=None):
     # to keep any calib images held separately
     for path, files in image_dir_jpegs.items():
 
-        sys.stdout.write(' - Scanning EXIF data for {}'.format(path))
+        sys.stdout.write(' - Scanning EXIF data for {}\n'.format(path))
+        sys.stdout.flush()
 
         # get full paths
         files = [os.path.join(path, fl) for fl in files]
@@ -132,7 +133,7 @@ def process_deployment(image_dirs, location, output_root, calib=None):
         files = image_dir_jpegs[im_dir]
         new_files = [os.path.join(outdir, fl) for fl in new_files[im_dir]]
 
-        with progressbar.ProgressBar(max=len(files)) as bar:
+        with progressbar.ProgressBar(max_value=len(files)) as bar:
             for idx, (src, dst) in enumerate(zip(files, new_files)):
                 shutil.copyfile(src, dst)
                 bar.update(idx)
@@ -142,7 +143,7 @@ def process_deployment(image_dirs, location, output_root, calib=None):
         os.mkdir(os.path.join(outdir, 'calib'))
         calib_new_files = [os.path.join(outdir, 'calib', fl) for fl in calib_new_files]
 
-        with progressbar.ProgressBar(max= len(calib_files)) as bar:
+        with progressbar.ProgressBar(max_value=len(calib_files)) as bar:
             for src, dst in zip(calib_files, calib_new_files):
                 shutil.copyfile(src, dst)
 
@@ -173,7 +174,7 @@ def main():
 
     args = parser.parse_args()
 
-    process_deployment(image_dirs = args.directories, calib=args.calib,
+    process_deployment(image_dirs=args.directories, calib=args.calib,
                        location=args.location, output_root=args.output_root)
 
 
