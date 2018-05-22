@@ -5,6 +5,20 @@ data is well documented and easy to share. This repository contains two simple t
 standardise the folder structure of camera trap images into deployments and to extract EXIF data from 
 marked up images into a standard format.
 
+## Requirements
+Both tools require the PERL program `exiftool` to be installed: [https://www.sno.phy.queensu.ca/~phil/exiftool/].
+This program is widely supported across platforms and provides fantastic support for reading EXIF data from images. 
+EXIF data is messy - there are some standard tags but hardware and software manufacturers can make up their own tags,
+which often contain important information: `exiftool` includes a unique database of EXIF tags and 
+possible values from a very wide range of sources.
+
+This also means that Python needs to be able to talk to `exifttool`. For this, the program uses a simple interface 
+package which can be installed as follow:
+
+```bash
+pip install ocrd-pyexiftool
+```
+
 ## process_deployment
 
 A **deployment** is simply the whole process of putting out a camera trap in a single location for a period 
@@ -15,7 +29,7 @@ In practice, the camera trap isn't usually just sitting there undisturbed for th
 might need changing, you might run a set of calibration images, the memory card might fill up. The end result 
 is that as a field user, you're almost certainly going to end up with more than one folder of images for a 
 single deployment. If the camera has reset a counter then some of the files in those folders may have the same
-names (e.g. ''IMG_0001.JPG''). Even if this deployment doesn't have the same names, those names are 
+names (e.g. `IMG_0001.JPG`). Even if this deployment doesn't have the same names, those names are 
 certainly going to crop up in other deployments.
 
 So, this tool takes a location name from the SAFE gazetteer, an output root directory and a set of camera trap
