@@ -38,6 +38,11 @@ So, this tool takes a location name from the SAFE gazetteer, an output root dire
 image folder names and builds a new single folder containing all the images, with standard informative names. If
 you have a folder of calibration images for a deployment, that can be included as a sub-folder.
 
+The standard name structure is:
+
+* The deployment folder name must have the format `location_YYYYMMDD`, where `location` is a location name from the SAFE gazetteer and the date is the start date of the deployment. The start date is extracted automatically as the date of the earliest image.
+* Image names must have the format `location_YYYYMMDD_HHMMSS_#`: the same as the deployment, plus the time that the image was taken and the image sequence number (`#`). This last number is because cameras firing in burst mode can easily take multiple images in the same second, so we need the unique sequence number in the burst to separate them. If the image isn't in a sequence, then the number 0 is used: it is easier to parse file names if they all have the same structure.
+
 So, for example, the final deployment folder might look like this:
 
 ```
