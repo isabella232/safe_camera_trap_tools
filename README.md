@@ -6,14 +6,16 @@ standardise the folder structure of camera trap images into deployments and to e
 marked up images into a standard format.
 
 ## Requirements
-Both tools require the PERL program `exiftool` to be installed: [https://www.sno.phy.queensu.ca/~phil/exiftool/].
+You will need an installation of Python along with the standard library.
+
+Both tools require the PERL program `exiftool` to be installed: https://www.sno.phy.queensu.ca/~phil/exiftool/.
 This program is widely supported across platforms and provides fantastic support for reading EXIF data from images. 
 EXIF data is messy - there are some standard tags but hardware and software manufacturers can make up their own tags,
 which often contain important information: `exiftool` includes a unique database of EXIF tags and 
 possible values from a very wide range of sources.
 
 This also means that Python needs to be able to talk to `exifttool`. For this, the program uses a simple interface 
-package which can be installed as follow:
+package which can be installed as follows:
 
 ```bash
 pip install ocrd-pyexiftool
