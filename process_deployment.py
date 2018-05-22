@@ -147,7 +147,7 @@ def process_deployment(image_dirs, location, output_root, calib=None):
     if calib is not None:
         os.mkdir(os.path.join(outdir, 'calib'))
         calib_new_files = [os.path.join(outdir, 'calib', fl) for fl in calib_new_files]
-        sys.stdout.write(' - Copying contents of {}\n'.format(im_dir))
+        sys.stdout.write(' - Copying contents of {}\n'.format(calib))
         sys.stdout.flush()
 
         with progressbar.ProgressBar(max_value=len(calib_files)) as bar:
