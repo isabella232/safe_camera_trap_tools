@@ -44,23 +44,24 @@ def process_deployment(image_dirs, location, output_root, calib=None):
 
     """
 
-    # add the calibration folder to the list of image directories
+    # add the calibration folder to the list of image directories to
+    # get a list of directories to process
     if calib is not None:
-        image_dirs += [calib]
+        process_dirs = image_dirs + [calib]
 
     # Check image directories exist and are directories
-    dir_check = [os.path.isdir(dr) for dr in image_dirs]
+    dir_check = [os.path.isdir(dr) for dr in process_dirs]
     if not all(dir_check):
-        missing = [dr for dr, ck in zip(image_dirs, dir_check) if not ck]
+        missing = [dr for dr, ck in zip(process_dirs, dir_check) if not ck]
         raise IOError('Directories not found: {}'.format(', '.join(missing)))
 
     # load list of files and pull out jpeg files
-    image_dir_contents = {dr: os.listdir(dr) for dr in image_dirs}
+    image_dir_contents = {dr: os.listdir(dr) for dr in process_dirs}
     image_dir_jpegs = {dr: [fl for fl in cont if fl.lower().endswith('jpg')]
                        for dr, cont in image_dir_contents.items()}
 
     # report on what is found
-    for im_dir in image_dirs:
+    for im_dir in process_dirs:
         n_files = len(image_dir_contents[im_dir])
         n_jpegs = len(image_dir_jpegs[im_dir])
         msg = '- Found {} containing {} JPEG images\n'.format(im_dir, n_jpegs)
