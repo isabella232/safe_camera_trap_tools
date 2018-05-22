@@ -48,6 +48,8 @@ def process_deployment(image_dirs, location, output_root, calib=None):
     # get a list of directories to process
     if calib is not None:
         process_dirs = image_dirs + [calib]
+    else:
+        process_dirs = image_dirs
 
     # Check image directories exist and are directories
     dir_check = [os.path.isdir(dr) for dr in process_dirs]
@@ -64,7 +66,7 @@ def process_deployment(image_dirs, location, output_root, calib=None):
     for im_dir in process_dirs:
         n_files = len(image_dir_contents[im_dir])
         n_jpegs = len(image_dir_jpegs[im_dir])
-        msg = '- Found {} containing {} JPEG images\n'.format(im_dir, n_jpegs)
+        msg = ' - Found {} containing {} JPEG images\n'.format(im_dir, n_jpegs)
         sys.stdout.write(msg)
         if n_files != n_jpegs:
             msg = ' !!! {} non-image files or folders also found\n'.format(n_files - n_jpegs)
@@ -101,8 +103,7 @@ def process_deployment(image_dirs, location, output_root, calib=None):
                        for td in tag_data]
 
         # in burst mode, time to seconds is not unique, so add sequence number
-        sequence = [td[u'MakerNotes:Sequence'].split()[0] for td in tag_data]
-        sequence = ['_' + seq if int(seq) > 0 else "" for seq in sequence]
+        sequence = ['_' + td[u'MakerNotes:Sequence'].split()[0] for td in tag_data]
 
         # update earliest date
         if min(create_date) < min_date:
@@ -127,19 +128,19 @@ def process_deployment(image_dirs, location, output_root, calib=None):
     outdir = '{}_{}'.format(location, min_date.strftime("%Y%m%d_%H%M%S"))
     outdir = os.path.abspath(os.path.join(output_root, outdir))
     if os.path.exists(outdir):
-        raise IOError('Output directory already exists:\n   {}'.format(outdir))
+        raise IOError('Output directory already exists:\n    {}'.format(outdir))
     else:
         os.mkdir(outdir)
 
     # move the files
     for im_dir in image_dirs:
-        files = image_dir_jpegs[im_dir]
-        new_files = [os.path.join(outdir, fl) for fl in new_files[im_dir]]
+        source = image_dir_jpegs[im_dir]
+        destination = [os.path.join(outdir, fl) for fl in new_files[im_dir]]
         sys.stdout.write(' - Copying contents of {}\n'.format(im_dir))
         sys.stdout.flush()
 
-        with progressbar.ProgressBar(max_value=len(files)) as bar:
-            for idx, (src, dst) in enumerate(zip(files, new_files)):
+        with progressbar.ProgressBar(max_value=len(source)) as bar:
+            for idx, (src, dst) in enumerate(zip(source, destination)):
                 shutil.copyfile(src, dst)
                 bar.update(idx)
 
@@ -154,6 +155,9 @@ def process_deployment(image_dirs, location, output_root, calib=None):
             for idx, (src, dst) in enumerate(zip(calib_files, calib_new_files)):
                 shutil.copyfile(src, dst)
                 bar.update(idx)
+
+    # tidy up
+    et.terminate()
 
 
 def main():
