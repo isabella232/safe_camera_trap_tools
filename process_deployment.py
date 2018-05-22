@@ -125,7 +125,7 @@ def process_deployment(image_dirs, location, output_root, calib=None):
         calib_new_files = new_files.pop(calib)
 
     # get the final directory name and check it doesn't already exist
-    outdir = '{}_{}'.format(location, min_date.strftime("%Y%m%d_%H%M%S"))
+    outdir = '{}_{}'.format(location, min_date.strftime("%Y%m%d"))
     outdir = os.path.abspath(os.path.join(output_root, outdir))
     if os.path.exists(outdir):
         raise IOError('Output directory already exists:\n    {}'.format(outdir))
