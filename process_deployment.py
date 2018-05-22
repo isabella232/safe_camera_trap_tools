@@ -140,6 +140,8 @@ def process_deployment(image_dirs, location, output_root, calib=None):
     # create and move the calibration folder
     if calib is not None:
         os.mkdir(os.path.join(outdir, 'calib'))
+        calib_new_files = [os.path.join(outdir, 'calib', fl) for fl in calib_new_files]
+
         with progressbar.ProgressBar(max= len(calib_files)) as bar:
             for src, dst in zip(calib_files, calib_new_files):
                 shutil.copyfile(src, dst)
