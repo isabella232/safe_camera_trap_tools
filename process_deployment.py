@@ -69,8 +69,9 @@ def process_deployment(image_dirs, location, output_root, calib=None):
         msg = ' - Found {} containing {} JPEG images\n'.format(im_dir, n_jpegs)
         sys.stdout.write(msg)
         if n_files != n_jpegs:
-            msg = ' !!! {} non-image files or folders also found\n'.format(n_files - n_jpegs)
-            sys.stdout.write(msg)
+            extra = ', '.join(set(image_dir_contents[im_dir]) - set(image_dir_jpegs[im_dir]))
+            msg = ' *!* {} non-image files or folders also found: {}\n'
+            sys.stdout.write(msg.format(n_files - n_jpegs, extra))
 
     # check the output root directory
     if not os.path.isdir(output_root):
@@ -97,9 +98,17 @@ def process_deployment(image_dirs, location, output_root, calib=None):
         files = [os.path.join(path, fl) for fl in files]
 
         # get creation date and sequence tag from EXIF
-        tags = ['EXIF:DateTimeOriginal', u'MakerNotes:Sequence']
+        tags = ['EXIF:CreateDate', u'MakerNotes:Sequence']
         tag_data = et.get_tags_batch(tags, files)
-        create_date = [datetime.datetime.strptime(td['EXIF:DateTimeOriginal'], '%Y:%m:%d %H:%M:%S')
+
+        # check tags found
+        date_found = ['EXIF:CreateDate' in tg for tg in tag_data]
+        seq_found = ['MakerNotes:Sequence' in tg for tg in tag_data]
+
+        if not all(date_found) or not all(seq_found):
+            raise RuntimeError('Files in {} missing date and/or sequence tags'.format(path))
+
+        create_date = [datetime.datetime.strptime(td['EXIF:CreateDate'], '%Y:%m:%d %H:%M:%S')
                        for td in tag_data]
 
         # in burst mode, time to seconds is not unique, so add sequence number
