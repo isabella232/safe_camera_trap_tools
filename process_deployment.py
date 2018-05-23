@@ -95,8 +95,8 @@ def process_deployment(image_dirs, location, output_root, calib=None):
         tag_data = et.get_tags_batch(tags, files)
 
         # check tags found and report first five file names
-        date_missing = [fl for fl, tg in zip(files, tag_data) if 'EXIF:CreateDate' in tg]
-        seq_missing = [fl for fl, tg in zip(files, tag_data) if 'MakerNotes:Sequence' in tg]
+        date_missing = [fl for fl, tg in zip(files, tag_data) if 'EXIF:CreateDate' not in tg]
+        seq_missing = [fl for fl, tg in zip(files, tag_data) if 'MakerNotes:Sequence' not in tg]
 
         if len(date_missing):
             n_missing = len(date_missing)
