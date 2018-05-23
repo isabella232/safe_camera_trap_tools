@@ -6,24 +6,17 @@ import shutil
 import exiftool
 import datetime
 
-# pip install ocrd-pyexiftool
-
-
 """
 This script rearranges a set of folders from a camera trap deployment
 into a single folder and sets standardised names. It handles CALIB 
 directories and also extracts exif data.
 
-EXIF data is suprisingly annoying to read in Python. Many libraries exist
+EXIF data is surprisingly annoying to read in Python. Many libraries exist
 but few handle much beyond a standard set of tags, leaving a lot of information
 either unread or as raw hex. The Perl Exiftool is backed by a gigantic library
 of tag identifications, so the pyexiftool interface - which just calls exiftool
 and wraps up the response - seems to be one of the few options to actually be 
-able to leverage that information - but it isn't on pypi.
-
-https://github.com/smarnach/pyexiftool
-
-
+able to leverage that information: pip install ocrd-pyexiftool
 """
 
 
@@ -101,12 +94,29 @@ def process_deployment(image_dirs, location, output_root, calib=None):
         tags = ['EXIF:CreateDate', u'MakerNotes:Sequence']
         tag_data = et.get_tags_batch(tags, files)
 
-        # check tags found
-        date_found = ['EXIF:CreateDate' in tg for tg in tag_data]
-        seq_found = ['MakerNotes:Sequence' in tg for tg in tag_data]
+        # check tags found and report first five file names
+        date_missing = [fl for fl, tg in zip(files, tag_data) if 'EXIF:CreateDate' in tg]
+        seq_missing = [fl for fl, tg in zip(files, tag_data) if 'MakerNotes:Sequence' in tg]
 
-        if not all(date_found) or not all(seq_found):
-            raise RuntimeError('Files in {} missing date and/or sequence tags'.format(path))
+        if len(date_missing):
+            n_missing = len(date_missing)
+            report_n = min(5, n_missing)
+            report_missing = ','.join(date_missing[0:report_n])
+            if report_n < n_missing:
+                report_missing += ", ..."
+
+            raise RuntimeError(
+                '{} files missing CreateDate tag: {}'.format(n_missing, report_missing))
+
+        if len(seq_missing):
+            n_missing = len(seq_missing)
+            report_n = min(5, n_missing)
+            report_missing = ','.join(seq_missing[0:report_n])
+            if report_n < n_missing:
+                report_missing += ", ..."
+
+            raise RuntimeError(
+                '{} files missing Sequence tag: {}'.format(n_missing, report_missing))
 
         create_date = [datetime.datetime.strptime(td['EXIF:CreateDate'], '%Y:%m:%d %H:%M:%S')
                        for td in tag_data]
