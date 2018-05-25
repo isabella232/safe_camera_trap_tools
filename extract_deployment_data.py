@@ -54,76 +54,121 @@ def extract_deployment_data(deployment, outfile=None):
     sys.stdout.flush()
 
     # get exif data for images and then convert to a pandas dataframe
-    # and convert the creation date strings to pandas Timestamps
     images_exif = et.get_metadata_batch([os.path.join(deployment, im) for im in images])
     images_exif = pandas.DataFrame(images_exif)
-    images_exif["EXIF:CreateDate"] = pandas.to_datetime(images_exif["EXIF:CreateDate"],
-                                                        format='%Y:%m:%d %H:%M:%S')
 
     # If any, get the same exif data for calibration images
     if calib:
         calib_exif = et.get_metadata_batch([os.path.join(calib_dir, im) for im in calib])
         calib_exif = pandas.DataFrame(calib_exif)
-        calib_exif["EXIF:CreateDate"] = pandas.to_datetime(calib_exif["EXIF:CreateDate"],
-                                                           format='%Y:%m:%d %H:%M:%S')
     else:
         # empty placeholders to use in rest of processing
         calib = []
         calib_exif = images_exif.iloc[0:0]
 
-    # DEPLOYMENT level data
+    # Simplify EXIF tag names to remove EXIF group and combine the image
+    # and calibration image data
+    images_exif.columns = [v.split(':')[1] for v in images_exif.columns]
+    calib_exif.columns = [v.split(':')[1] for v in calib_exif.columns]
+    images_exif['Calib'] = 0
+    calib_exif['Calib'] = 1
+    images_exif =  pandas.concat([images_exif, calib_exif], axis=0)
 
-    # get the date range
-    dep_data = pandas.concat([images_exif, calib_exif], axis=0)
-    start_dt =  dep_data["EXIF:CreateDate"].min()
-    end_dt =  dep_data["EXIF:CreateDate"].max()
-    n_days = (end_dt - start_dt).ceil('D').days
+    # convert creation date to timestamp
+    images_exif["CreateDate"] = pandas.to_datetime(images_exif["CreateDate"],
+                                                   format='%Y:%m:%d %H:%M:%S')
 
-    # reduce to the deployment level tags
-    dep_tags = ['EXIF:Make', 'EXIF:Model', 'MakerNotes:SerialNumber',
-                'MakerNotes:FirmwareDate', 'File:ImageHeight', 'File:ImageWidth']
-    dep_data = pandas.concat([images_exif[dep_tags], calib_exif[dep_tags]], axis=0)
+    #  EXTRACT KEYWORD TAGGING
 
-    # The data in all these rows should be identical
-    dep_data.drop_duplicates(inplace=True)
-    if dep_data.shape[0] > 1:
-        raise RuntimeError('Deployment level data is not consistent')
-
-    # strip exif groups and add dates and file counts
-    dep_data.columns = [v.split(':')[1] for v in dep_data.columns]
-
-    dep_data['n_images'] = len(images)
-    dep_data['n_calib'] = len(calib)
-    dep_data['start'] = str(start_dt)
-    dep_data['end'] = str(end_dt)
-    dep_data['n_days'] = n_days
-
-    # transpose the data to give a set of header rows
-    dep_data.transpose().to_csv(outfile, sep='\t', header=None)
-
-    # parse the keywords data to a dictionary for each row, allowing for repeated keywords
-    # and then convert that into a pandas dataframe with a column for each tag number
     def kw_dict(kw_list):
+        """
+        Takes a list of keyword lists (one list for each image) and returns
+        them as a list of dictionaries, keyed by keyword tag number. Combines
+        duplicate tag numbers and strips whitespace padding.
+
+        For example:
+        [['15: E100-2-23', '16: Person', '16: Setup', '24: Phil'], [...
+        goes to
+        [{'15': 'E100-2-23', '16': 'Person, Setup', '24': 'Phil'}, {...
+        """
         kw_list = [kw.split(':') for kw in kw_list]
         kw_list.sort(key=lambda x: x[0])
         kw_groups = groupby(kw_list, key=lambda x: x[0])
         kw_dict = dict([(k, ', '.join(vl[1].strip() for vl in vals)) for k, vals in kw_groups])
         return kw_dict
 
-    keywords = images_exif['IPTC:Keywords'].apply(kw_dict)
-    keywords = pandas.DataFrame(list(keywords))
+    if 'Keywords' not in images_exif:
+        sys.stderr.write(' ! Image tagging keywords not found')
+        sys.stderr.flush()
+        keywords = pandas.DataFrame()
+    else:
+        # convert the keywords from a single exif tag into a data frame with
+        # tag numbers as keys
+        keywords = images_exif['Keywords'].apply(kw_dict)
+        keywords = pandas.DataFrame(list(keywords))
+        keywords.columns = ['Tag_' + tg for th in keywords.columns]
+        images_exif = pandas.concat([images_exif, keywords], axis=1)
 
-    # add image information to the keyword data, stripping the exif groups
-    image_info = ["File:FileName", "EXIF:CreateDate", "EXIF:ExposureTime", "EXIF:ISO",
-                  "EXIF:Flash", "MakerNotes:InfraredIlluminator", "MakerNotes:MotionSensitivity",
-                  "MakerNotes:AmbientTemperature", "EXIF:SceneCaptureType",
-                  "MakerNotes:Sequence", "MakerNotes:TriggerMode"]
+    # DEPLOYMENT level data
+    sys.stdout.write('Checking for consistent deployment data\n')
 
-    images_exif = images_exif[image_info]
-    images_exif.columns = [v.split(':')[1] for v in images_exif.columns]
+    # check camera data
+    dep_data = images_exif['Make', 'Model', 'SerialNumber', 'FirmwareDate',
+                              'ImageHeight', 'ImageWidth']
+    dep_data.drop_duplicates(inplace=True)
 
-    image_data =  pandas.concat([images_exif, keywords], axis=1)
-    image_data.to_csv(outfile, mode='a', sep='\t', index=None)
+    if dep_data.shape[0] > 1:
+        sys.stderr.write(' ! Camera data is not consistent')
+        sys.stderr.flush()
+
+    # check location data (only keyword tag that should be constant)
+    if 'Tag_15' not in images_exif:
+        sys.stderr.write(' ! No location tags (15) found\n')
+        sys.stderr.flush()
+    else:
+        locations = df.Tag_15.unique()
+        if len(locations) > 1:
+            sys.stderr.write(' ! Location tags (15) not consistent:'
+                             ' {}\n'.format(', '.join(locations)))
+            sys.stderr.flush()
+        dep_data['Location'] = locations
+    
+    if 'CreateDate' not in images_exif:
+        sys.stderr.write(' ! No CreateDate tags found\n')
+        sys.stderr.flush()
+    else:
+        # get the date range
+        start_dt =  images_exif["CreateDate"].min()
+        end_dt =  images_exif["CreateDate"].max()
+        n_days = (end_dt - start_dt).ceil('D').days
+        dep_data['start'] = str(start_dt)
+        dep_data['end'] = str(end_dt)
+        dep_data['n_days'] = n_days
+
+    dep_data['n_images'] = len(images)
+    dep_data['n_calib'] = len(calib)
+    n_total = len(images) +len(calib)
+
+    # transpose the data to give a set of header rows
+    dep_data = dep_data.transpose()
+
+    # print to screen to report
+    print(dep_data.to_csv(header=False))
+
+    # IMAGE level data
+    # report on keyword tag completeness:
+    if not keywords.empty:
+        kw_tag_count = keywords.count()
+        kw_tag_txt = [ str(ct) + ' / ' +  str(n_total)  for ct in kw_tag_count]
+        kw_df = pandas.DataFrame(data={'tag': kw_tag_count.index, 'count':kw_tag_txt})
+        print(kw_df.to_csv(header=None, sep='\t'))
+
+    # write required field to output file
+    image_info = ["FileName", "CreateDate", "ExposureTime", "ISO", "Flash",
+                  "InfraredIlluminator", "MotionSensitivity", "AmbientTemperature",
+                  "SceneCaptureType", "Sequence", "TriggerMode"] + keywords.columns
+
+    images_exif[image_info].to_csv(outfile, mode='a', sep='\t', index=None)
 
     # tidy up
     sys.stdout.write('Data written to {}\n'.format(outfile))
