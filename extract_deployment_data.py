@@ -21,10 +21,8 @@ def extract_deployment_data(deployment, outfile=None):
 
     Args:
         deployment: A path to a deployment directory
-        outfile: A path to a file to hold the extracted data, defaulting to the
-            deployment folder name + '_exif_data.csv'
-    Returns:
-
+        outfile: A path to a file to hold the extracted data, defaulting to saving
+            the data as 'exif_data.csv' within the deployment directory
     """
 
     # get an exifread.ExifTool instance
@@ -36,29 +34,34 @@ def extract_deployment_data(deployment, outfile=None):
         raise IOError('Deployment path does not exist or is not a directory.')
 
     if outfile is None:
-        outfile = deployment + '_exif_data.csv'
+        outfile = os.path.join(deployment, 'exif_data.csv')
 
     images = os.listdir(deployment)
     images = [im for im in images if im.lower().endswith('.jpg')]
-    sys.stdout.write(' - Extracting data from {} images in {}\n'.format(len(images), deployment))
-    sys.stdout.flush()
 
-    # Get a list of JPG images and get their exif data - for large directories,
-    # this could be a pretty big chunk of data - and then convert to a pandas dataframe
-    # and convert the creation date strings to pandas Timestamps
-    images = os.listdir(deployment)
-    images = [im for im in images if im.lower().endswith('.jpg')]
-    images_exif = et.get_metadata_batch([os.path.join(deployment, im) for im in images])
-    images_exif = pandas.DataFrame(images_exif)
-    images_exif["EXIF:CreateDate"] = pandas.to_datetime(images_exif["EXIF:CreateDate"],
-                                                        format='%Y:%m:%d %H:%M:%S')
-
-    # Check for a calib directory
+    # check for any calibration images
     calib_dir = os.path.join(deployment, 'calib')
     if os.path.exists(calib_dir):
         # get exif data from calibration images
         calib = os.listdir(calib_dir)
         calib = [im for im in calib if im.lower().endswith('.jpg')]
+    else:
+        calib = []
+
+    sys.stdout.write('Extracting data from {}\n '
+                     ' - {} images found\n '
+                     ' - {} calibration_images found'.format(deployment, len(images), len(calib)))
+    sys.stdout.flush()
+
+    # get exif data for images and then convert to a pandas dataframe
+    # and convert the creation date strings to pandas Timestamps
+    images_exif = et.get_metadata_batch([os.path.join(deployment, im) for im in images])
+    images_exif = pandas.DataFrame(images_exif)
+    images_exif["EXIF:CreateDate"] = pandas.to_datetime(images_exif["EXIF:CreateDate"],
+                                                        format='%Y:%m:%d %H:%M:%S')
+
+    # If any, get the same exif data for calibration images
+    if calib:
         calib_exif = et.get_metadata_batch([os.path.join(calib_dir, im) for im in calib])
         calib_exif = pandas.DataFrame(calib_exif)
         calib_exif["EXIF:CreateDate"] = pandas.to_datetime(calib_exif["EXIF:CreateDate"],
@@ -86,14 +89,18 @@ def extract_deployment_data(deployment, outfile=None):
     if dep_data.shape[0] > 1:
         raise RuntimeError('Deployment level data is not consistent')
 
+    # strip exif groups and add dates and file counts
+    dep_data.columns = [v.split(':')[1] for v in dep_data.columns]
+
     dep_data['n_images'] = len(images)
     dep_data['n_calib'] = len(calib)
     dep_data['start'] = str(start_dt)
     dep_data['end'] = str(end_dt)
     dep_data['n_days'] = n_days
 
-    # transpose the data to give rows
-    dep_data.transpose().to_csv(outfile)
+    # transpose the data to give a set of header rows, removing the row indices
+    dep_data = dep_data.set_index('Make').transpose()
+    dep_data.to_csv(outfile)
 
     # parse the keywords data to a dictionary for each row, allowing for repeated keywords
     # and then convert that into a pandas dataframe with a column for each tag number
@@ -101,19 +108,23 @@ def extract_deployment_data(deployment, outfile=None):
         kw_list = [kw.split(':') for kw in kw_list]
         kw_list.sort(key=lambda x: x[0])
         kw_groups = groupby(kw_list, key=lambda x: x[0])
-        kw_dict = dict([(k, ', '.join(vl[1] for vl in vals)) for k, vals in kw_groups])
+        kw_dict = dict([(k, ', '.join(vl[1].strip() for vl in vals)) for k, vals in kw_groups])
         return kw_dict
 
     keywords = images_exif['IPTC:Keywords'].apply(kw_dict)
     keywords = pandas.DataFrame(list(keywords))
 
-    # add image information to the keyword data
+    # add image information to the keyword data, stripping the exif groups
     image_info = ["File:FileName", "EXIF:CreateDate", "EXIF:ExposureTime", "EXIF:ISO",
                   "EXIF:Flash", "MakerNotes:InfraredIlluminator", "MakerNotes:MotionSensitivity",
                   "MakerNotes:AmbientTemperature", "EXIF:SceneCaptureType",
                   "MakerNotes:Sequence", "MakerNotes:TriggerMode"]
 
-    image_data =  pandas.concat([images_exif[image_info], keywords], axis=1)
+    images_exif = images_exif[image_info]
+    images_exif.columns = [v.split(':')[1] for v in images_exif.columns]
+
+    image_data =  pandas.concat([images_exif, keywords], axis=1)
+    image_data.set_index('FileName')
     image_data.to_csv(outfile, mode='a')
 
     # tidy up
