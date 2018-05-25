@@ -4,7 +4,7 @@ import argparse
 import exiftool
 import pandas
 from itertools import groupby
-import datetime
+import re
 
 """
 This script takes a single deployment folder and extracts EXIF data and other 
@@ -68,8 +68,9 @@ def extract_deployment_data(deployment, outfile=None):
 
     # Simplify EXIF tag names to remove EXIF group and combine the image
     # and calibration image data
-    images_exif.columns = [v.split(':')[1] for v in images_exif.columns]
-    calib_exif.columns = [v.split(':')[1] for v in calib_exif.columns]
+    exif_group = re.compile('[A-z]+:')
+    images_exif.columns = [exif_group.sub('', vl) for vl in images_exif.columns]
+    calib_exif.columns = [exif_group.sub('', vl) for vl in calib_exif.columns]
     images_exif['Calib'] = 0
     calib_exif['Calib'] = 1
     images_exif =  pandas.concat([images_exif, calib_exif], axis=0)
@@ -79,7 +80,7 @@ def extract_deployment_data(deployment, outfile=None):
                                                    format='%Y:%m:%d %H:%M:%S')
 
     #  EXTRACT KEYWORD TAGGING
-
+    # conversion function
     def kw_dict(kw_list):
         """
         Takes a list of keyword lists (one list for each image) and returns
