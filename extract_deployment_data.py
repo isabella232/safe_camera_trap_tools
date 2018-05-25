@@ -68,12 +68,24 @@ def extract_deployment_data(deployment, outfile=None):
 
     # Simplify EXIF tag names to remove EXIF group and combine the image
     # and calibration image data
+    images_exif['Calib'] = 0
+    calib_exif['Calib'] = 1
+    images_exif = pandas.concat([images_exif, calib_exif], axis=0)
+
+    # Reduce to tags used in rest of the script
+    keep_tags = ['EXIF:Make', 'EXIF:Model', 'MakerNotes:SerialNumber',
+                 'MakerNotes:FirmwareDate', 'File:ImageHeight', 'File:ImageWidth',
+                 "File:FileName", "EXIF:CreateDate", "EXIF:ExposureTime", "EXIF:ISO",
+                 "EXIF:Flash", "MakerNotes:InfraredIlluminator", "MakerNotes:MotionSensitivity",
+                 "MakerNotes:AmbientTemperature", "EXIF:SceneCaptureType",
+                 "MakerNotes:Sequence", "MakerNotes:TriggerMode"]
+
+    images_exif = images_exif[keep_tags]
+
+    # Simplify those names by dropping EXIF group information
     exif_group = re.compile('[A-z]+:')
     images_exif.columns = [exif_group.sub('', vl) for vl in images_exif.columns]
     calib_exif.columns = [exif_group.sub('', vl) for vl in calib_exif.columns]
-    images_exif['Calib'] = 0
-    calib_exif['Calib'] = 1
-    images_exif =  pandas.concat([images_exif, calib_exif], axis=0)
 
     # convert creation date to timestamp
     images_exif["CreateDate"] = pandas.to_datetime(images_exif["CreateDate"],
