@@ -50,7 +50,7 @@ def extract_deployment_data(deployment, outfile=None):
 
     sys.stdout.write('Extracting data from {}\n '
                      ' - {} images found\n '
-                     ' - {} calibration_images found\n'.format(deployment, len(images), len(calib)))
+                     ' - {} calibration images found\n'.format(deployment, len(images), len(calib)))
     sys.stdout.flush()
 
     # get exif data for images and then convert to a pandas dataframe
@@ -73,7 +73,7 @@ def extract_deployment_data(deployment, outfile=None):
     images_exif = pandas.concat([images_exif, calib_exif], axis=0)
 
     # Reduce to tags used in rest of the script
-    keep_tags = ['EXIF:Make', 'EXIF:Model', 'MakerNotes:SerialNumber',
+    keep_tags = ['EXIF:Make', 'EXIF:Model', 'MakerNotes:SerialNumber', 'Calib',
                  'MakerNotes:FirmwareDate', 'File:ImageHeight', 'File:ImageWidth',
                  "File:FileName", "EXIF:CreateDate", "EXIF:ExposureTime", "EXIF:ISO",
                  "EXIF:Flash", "MakerNotes:InfraredIlluminator", "MakerNotes:MotionSensitivity",
@@ -92,7 +92,7 @@ def extract_deployment_data(deployment, outfile=None):
 
     #  EXTRACT KEYWORD TAGGING
     # conversion function
-    def kw_dict(kw_list):
+    def kw_list_to_dict(kw_list):
         """
         Takes a list of keyword lists (one list for each image) and returns
         them as a list of dictionaries, keyed by keyword tag number. Combines
@@ -116,7 +116,7 @@ def extract_deployment_data(deployment, outfile=None):
     else:
         # convert the keywords from a single exif tag into a data frame with
         # tag numbers as keys
-        keywords = images_exif['Keywords'].apply(kw_dict)
+        keywords = images_exif['Keywords'].apply(kw_list_to_dict)
         keywords = pandas.DataFrame(list(keywords))
         keywords.columns = ['Tag_' + tg for tg in keywords.columns]
         images_exif = images_exif.drop(labels='Keywords', axis=1)
@@ -126,9 +126,9 @@ def extract_deployment_data(deployment, outfile=None):
     # DEPLOYMENT level data
     sys.stdout.write('Checking for consistent deployment data\n')
 
-    # check camera data
+    # check camera data on a copy of the data frame
     dep_data = images_exif[['Make', 'Model', 'SerialNumber', 'FirmwareDate',
-                              'ImageHeight', 'ImageWidth']]
+                            'ImageHeight', 'ImageWidth']].copy()
     dep_data.drop_duplicates(inplace=True)
 
     if dep_data.shape[0] > 1:
@@ -152,8 +152,8 @@ def extract_deployment_data(deployment, outfile=None):
         sys.stderr.flush()
     else:
         # get the date range
-        start_dt =  images_exif["CreateDate"].min()
-        end_dt =  images_exif["CreateDate"].max()
+        start_dt = images_exif["CreateDate"].min()
+        end_dt = images_exif["CreateDate"].max()
         n_days = (end_dt - start_dt).ceil('D').days
         dep_data['start'] = str(start_dt)
         dep_data['end'] = str(end_dt)
@@ -161,27 +161,30 @@ def extract_deployment_data(deployment, outfile=None):
 
     dep_data['n_images'] = len(images)
     dep_data['n_calib'] = len(calib)
-    n_total = len(images) +len(calib)
+    n_total = len(images) + len(calib)
 
     # transpose the data to give a set of header rows
     dep_data = dep_data.transpose()
 
     # print to screen to report and to file
-    print(dep_data.to_csv(header=False, sep="\t"))
+    sys.stdout.write('Deployment data:\n')
+    print(dep_data.to_string(header=False))
     dep_data.to_csv(outfile, header=False, sep="\t")
 
     # IMAGE level data
     # report on keyword tag completeness:
     if not keywords.empty:
         kw_tag_count = keywords.count()
-        kw_tag_txt = [ str(ct) + ' / ' +  str(n_total)  for ct in kw_tag_count]
-        kw_df = pandas.DataFrame(data={'tag': kw_tag_count.index, 'count':kw_tag_txt})
-        print(kw_df.to_csv(header=None, sep='\t'))
-
+        kw_tag_txt = [str(ct) + ' / ' + str(n_total) for ct in kw_tag_count]
+        kw_df = pandas.DataFrame(data={'tag': kw_tag_count.index, 'count': kw_tag_txt})
+        sys.stdout.write('Image tag counts:\n')
+        print(kw_df[['tag', 'count']].to_string(header=False, index=False,
+                                                formatters=[lambda x: '  ' + str(x).ljust(10),
+                                                            lambda x: str(x).rjust(10)]))
     # write required field to output file
-    image_info = ["FileName", "CreateDate", "ExposureTime", "ISO", "Flash",
+    image_info = ["FileName", "CreateDate", "Calib", "ExposureTime", "ISO", "Flash",
                   "InfraredIlluminator", "MotionSensitivity", "AmbientTemperature",
-                  "SceneCaptureType", "Sequence", "TriggerMode"] + keywords.columns
+                  "SceneCaptureType", "Sequence", "TriggerMode"] + list(keywords.columns)
 
     images_exif[image_info].to_csv(outfile, mode='a', sep='\t', index=None)
 
