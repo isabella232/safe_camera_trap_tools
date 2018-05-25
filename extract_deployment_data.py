@@ -98,9 +98,8 @@ def extract_deployment_data(deployment, outfile=None):
     dep_data['end'] = str(end_dt)
     dep_data['n_days'] = n_days
 
-    # transpose the data to give a set of header rows, removing the row indices
-    dep_data = dep_data.set_index('Make').transpose()
-    dep_data.to_csv(outfile, sep='\t')
+    # transpose the data to give a set of header rows
+    dep_data.transpose().to_csv(outfile, sep='\t', header=None)
 
     # parse the keywords data to a dictionary for each row, allowing for repeated keywords
     # and then convert that into a pandas dataframe with a column for each tag number
@@ -124,8 +123,7 @@ def extract_deployment_data(deployment, outfile=None):
     images_exif.columns = [v.split(':')[1] for v in images_exif.columns]
 
     image_data =  pandas.concat([images_exif, keywords], axis=1)
-    image_data.set_index('FileName')
-    image_data.to_csv(outfile, mode='a', sep='\t')
+    image_data.to_csv(outfile, mode='a', sep='\t', index=None)
 
     # tidy up
     sys.stdout.write('Data written to {}\n'.format(outfile))
