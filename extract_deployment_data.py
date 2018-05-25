@@ -134,7 +134,7 @@ def main():
     parser = argparse.ArgumentParser(description=main.__doc__)
     parser.add_argument('deployment',
                         help='A path to a deployment directory')
-    parser.add_argument('-o', '--outfile',
+    parser.add_argument('-o', '--outfile', default=None,
                         help='A path to a file to hold the extracted data')
 
     args = parser.parse_args()
