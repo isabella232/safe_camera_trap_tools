@@ -21,8 +21,8 @@ def extract_deployment_data(deployment, outfile=None):
 
     Args:
         deployment: A path to a deployment directory
-        outfile: A path to a file to hold the extracted data, defaulting to saving
-            the data as 'exif_data.csv' within the deployment directory
+        outfile: A path to a file to hold the extracted data as tab delimited text,
+            defaulting to saving the data as 'exif_data.dat' within the deployment directory
     """
 
     # get an exifread.ExifTool instance
@@ -100,7 +100,7 @@ def extract_deployment_data(deployment, outfile=None):
 
     # transpose the data to give a set of header rows, removing the row indices
     dep_data = dep_data.set_index('Make').transpose()
-    dep_data.to_csv(outfile)
+    dep_data.to_csv(outfile, sep='\t')
 
     # parse the keywords data to a dictionary for each row, allowing for repeated keywords
     # and then convert that into a pandas dataframe with a column for each tag number
@@ -125,7 +125,7 @@ def extract_deployment_data(deployment, outfile=None):
 
     image_data =  pandas.concat([images_exif, keywords], axis=1)
     image_data.set_index('FileName')
-    image_data.to_csv(outfile, mode='a')
+    image_data.to_csv(outfile, mode='a', sep='\t')
 
     # tidy up
     et.terminate()
