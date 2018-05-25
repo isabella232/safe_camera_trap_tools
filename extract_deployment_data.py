@@ -78,14 +78,13 @@ def extract_deployment_data(deployment, outfile=None):
                  "File:FileName", "EXIF:CreateDate", "EXIF:ExposureTime", "EXIF:ISO",
                  "EXIF:Flash", "MakerNotes:InfraredIlluminator", "MakerNotes:MotionSensitivity",
                  "MakerNotes:AmbientTemperature", "EXIF:SceneCaptureType",
-                 "MakerNotes:Sequence", "MakerNotes:TriggerMode"]
+                 "MakerNotes:Sequence", "MakerNotes:TriggerMode", 'IPTC:Keywords']
 
     images_exif = images_exif[keep_tags]
 
     # Simplify those names by dropping EXIF group information
     exif_group = re.compile('[A-z]+:')
     images_exif.columns = [exif_group.sub('', vl) for vl in images_exif.columns]
-    calib_exif.columns = [exif_group.sub('', vl) for vl in calib_exif.columns]
 
     # convert creation date to timestamp
     images_exif["CreateDate"] = pandas.to_datetime(images_exif["CreateDate"],
@@ -111,7 +110,7 @@ def extract_deployment_data(deployment, outfile=None):
         return kw_dict
 
     if 'Keywords' not in images_exif:
-        sys.stderr.write(' ! Image tagging keywords not found')
+        sys.stderr.write(' ! Image tagging keywords not found\n')
         sys.stderr.flush()
         keywords = pandas.DataFrame()
     else:
@@ -119,15 +118,17 @@ def extract_deployment_data(deployment, outfile=None):
         # tag numbers as keys
         keywords = images_exif['Keywords'].apply(kw_dict)
         keywords = pandas.DataFrame(list(keywords))
-        keywords.columns = ['Tag_' + tg for th in keywords.columns]
+        keywords.columns = ['Tag_' + tg for tg in keywords.columns]
+        images_exif = images_exif.drop(labels='Keywords', axis=1)
+        images_exif.reset_index(inplace=True, drop=True)
         images_exif = pandas.concat([images_exif, keywords], axis=1)
 
     # DEPLOYMENT level data
     sys.stdout.write('Checking for consistent deployment data\n')
 
     # check camera data
-    dep_data = images_exif['Make', 'Model', 'SerialNumber', 'FirmwareDate',
-                              'ImageHeight', 'ImageWidth']
+    dep_data = images_exif[['Make', 'Model', 'SerialNumber', 'FirmwareDate',
+                              'ImageHeight', 'ImageWidth']]
     dep_data.drop_duplicates(inplace=True)
 
     if dep_data.shape[0] > 1:
@@ -139,7 +140,7 @@ def extract_deployment_data(deployment, outfile=None):
         sys.stderr.write(' ! No location tags (15) found\n')
         sys.stderr.flush()
     else:
-        locations = df.Tag_15.unique()
+        locations = images_exif.Tag_15.unique()
         if len(locations) > 1:
             sys.stderr.write(' ! Location tags (15) not consistent:'
                              ' {}\n'.format(', '.join(locations)))
@@ -165,8 +166,9 @@ def extract_deployment_data(deployment, outfile=None):
     # transpose the data to give a set of header rows
     dep_data = dep_data.transpose()
 
-    # print to screen to report
-    print(dep_data.to_csv(header=False))
+    # print to screen to report and to file
+    print(dep_data.to_csv(header=False, sep="\t"))
+    dep_data.to_csv(outfile, header=False, sep="\t")
 
     # IMAGE level data
     # report on keyword tag completeness:
