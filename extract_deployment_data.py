@@ -50,7 +50,7 @@ def extract_deployment_data(deployment, outfile=None):
 
     sys.stdout.write('Extracting data from {}\n '
                      ' - {} images found\n '
-                     ' - {} calibration_images found'.format(deployment, len(images), len(calib)))
+                     ' - {} calibration_images found\n'.format(deployment, len(images), len(calib)))
     sys.stdout.flush()
 
     # get exif data for images and then convert to a pandas dataframe
@@ -128,6 +128,7 @@ def extract_deployment_data(deployment, outfile=None):
     image_data.to_csv(outfile, mode='a', sep='\t')
 
     # tidy up
+    sys.stdout.write('Data written to {}\n'.format(outfile))
     et.terminate()
 
 
