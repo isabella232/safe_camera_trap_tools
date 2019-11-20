@@ -47,41 +47,45 @@ def _process_folder(image_dir, location, et, report_n=5):
     if other_files:
         sys.stdout.write(f' - *!* Found {len(other_files)} other files: {", ".join(other_files)}\n')
     
-    sys.stdout.write(' - Scanning EXIF data\n')
-    sys.stdout.flush()
+    # Handle folders with no images:
+    if len(jpeg_files):
+        sys.stdout.write(' - Scanning EXIF data\n')
+        sys.stdout.flush()
 
-    # get full paths
-    paths = [os.path.join(image_dir, fl) for fl in jpeg_files]
+        # get full paths
+        paths = [os.path.join(image_dir, fl) for fl in jpeg_files]
 
-    # get creation date and sequence tag from EXIF
-    tags = ['EXIF:CreateDate', u'MakerNotes:Sequence']
-    tag_data = et.get_tags_batch(tags, paths)
+        # get creation date and sequence tag from EXIF
+        tags = ['EXIF:CreateDate', u'MakerNotes:Sequence']
+        tag_data = et.get_tags_batch(tags, paths)
 
-    # check tags found and report first five file names
-    for tag_check in tags:
-        tag_missing = [fl for fl, tg in zip(files, tag_data) if tag_check not in tg]
-        if len(tag_missing):
-            n_missing = len(tag_missing)
-            report_missing = ','.join(tag_missing[0:report_n])
-            if report_n < n_missing:
-                report_missing += ", ..."
-            raise RuntimeError(f'{n_missing} files missing {tag_check} tag: {report_missing}')
+        # check tags found and report first five file names
+        for tag_check in tags:
+            tag_missing = [fl for fl, tg in zip(files, tag_data) if tag_check not in tg]
+            if len(tag_missing):
+                n_missing = len(tag_missing)
+                report_missing = ','.join(tag_missing[0:report_n])
+                if report_n < n_missing:
+                    report_missing += ", ..."
+                raise RuntimeError(f'{n_missing} files missing {tag_check} tag: {report_missing}')
     
-    # Generate new file names:
-    # a) Get file datetimes
-    create_date = [datetime.datetime.strptime(td['EXIF:CreateDate'], '%Y:%m:%d %H:%M:%S')
-                   for td in tag_data]
-    # b) in burst mode, time to seconds is not unique, so add sequence number
-    sequence = ['_' + td[u'MakerNotes:Sequence'].split()[0] for td in tag_data]
-    # c) put those together
-    new_name = [location + "_" + dt.strftime("%Y%m%d_%H%M%S") + seq + ".jpg"
-                for dt, seq in zip(create_date, sequence)]
+        # Generate new file names:
+        # a) Get file datetimes
+        create_date = [datetime.datetime.strptime(td['EXIF:CreateDate'], '%Y:%m:%d %H:%M:%S')
+                       for td in tag_data]
+        # b) in burst mode, time to seconds is not unique, so add sequence number
+        sequence = ['_' + td[u'MakerNotes:Sequence'].split()[0] for td in tag_data]
+        # c) put those together
+        new_name = [location + "_" + dt.strftime("%Y%m%d_%H%M%S") + seq + ".jpg"
+                    for dt, seq in zip(create_date, sequence)]
     
-    # Get earliest date
-    min_date = min(create_date)
+        # Get earliest date
+        min_date = min(create_date)
     
-    # Return a list of tuples [(src, dest), ...] and the earliest creation date
-    return(list(zip(paths, new_name)), min_date)
+        # Return a list of tuples [(src, dest), ...] and the earliest creation date
+        return(list(zip(paths, new_name)), min_date)
+    else:
+        return([], datetime.datetime(1,1,1))
 
 
 def process_deployment(image_dirs, location, output_root, calib_dirs=[], report_n=5, copy=False):
