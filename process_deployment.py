@@ -16,11 +16,75 @@ but few handle much beyond a standard set of tags, leaving a lot of information
 either unread or as raw hex. The Perl Exiftool is backed by a gigantic library
 of tag identifications, so the pyexiftool interface - which just calls exiftool
 and wraps up the response - seems to be one of the few options to actually be 
-able to leverage that information: pip install ocrd-pyexiftool
+able to leverage that information. You will need to install ExifTool and then
+pip install ocrd-pyexiftool
 """
 
 
-def process_deployment(image_dirs, location, output_root, calib=None):
+def _process_folder(image_dir, location, et, report_n=5):
+
+    """
+    This private function processes a single folder of images
+    
+    Args:
+        image_dir: The directory to process
+        location: The name of the location to be used as the deployment name
+        et: An exiftool instance
+        report_n: Number of files to report for missing tag data
+    
+    """
+
+    sys.stdout.write(f'Processing directory: {image_dir}\n')
+    
+    # Load list of files, ignoring nested directories and separate JPEGS
+    files =  next(os.walk(image_dir))[2]
+    jpeg_files = [fl for fl in files if fl.lower().endswith('jpg')]
+    other_files = set(files) - set(jpeg_files) 
+    
+    # report on what is found
+    sys.stdout.write(f' - Found {len(jpeg_files)} JPEG files\n')
+
+    if other_files:
+        sys.stdout.write(f' - *!* Found {len(other_files)} other files: {", ".join(other_files)}\n')
+    
+    sys.stdout.write(' - Scanning EXIF data\n')
+    sys.stdout.flush()
+
+    # get full paths
+    paths = [os.path.join(image_dir, fl) for fl in jpeg_files]
+
+    # get creation date and sequence tag from EXIF
+    tags = ['EXIF:CreateDate', u'MakerNotes:Sequence']
+    tag_data = et.get_tags_batch(tags, paths)
+
+    # check tags found and report first five file names
+    for tag_check in tags:
+        tag_missing = [fl for fl, tg in zip(files, tag_data) if tag_check not in tg]
+        if len(tag_missing):
+            n_missing = len(tag_missing)
+            report_missing = ','.join(tag_missing[0:report_n])
+            if report_n < n_missing:
+                report_missing += ", ..."
+            raise RuntimeError(f'{n_missing} files missing {tag_check} tag: {report_missing}')
+    
+    # Generate new file names:
+    # a) Get file datetimes
+    create_date = [datetime.datetime.strptime(td['EXIF:CreateDate'], '%Y:%m:%d %H:%M:%S')
+                   for td in tag_data]
+    # b) in burst mode, time to seconds is not unique, so add sequence number
+    sequence = ['_' + td[u'MakerNotes:Sequence'].split()[0] for td in tag_data]
+    # c) put those together
+    new_name = [location + "_" + dt.strftime("%Y%m%d_%H%M%S") + seq + ".jpg"
+                for dt, seq in zip(create_date, sequence)]
+    
+    # Get earliest date
+    min_date = min(create_date)
+    
+    # Return a list of tuples [(src, dest), ...] and the earliest creation date
+    return(list(zip(paths, new_name)), min_date)
+
+
+def process_deployment(image_dirs, location, output_root, calib_dirs=[], report_n=5, copy=False):
 
     """
     This function takes a set of directories containing camera trap images
@@ -31,150 +95,70 @@ def process_deployment(image_dirs, location, output_root, calib=None):
         image_dirs: A list of directories containing camera trap images
         location: The name of the location to be used as the deployment name
         output_root: The location to compile the deployment folder to
-        calib: An optional directory of calibration images.
+        calib: An optional list of directories of calibration images.
 
     Returns:
-
+        None
     """
-
-    # add the calibration folder to the list of image directories to
-    # get a list of directories to process
-    if calib is not None:
-        process_dirs = image_dirs + [calib]
-    else:
-        process_dirs = image_dirs
-
-    # Check image directories exist and are directories
-    dir_check = [os.path.isdir(dr) for dr in process_dirs]
-    if not all(dir_check):
-        missing = [dr for dr, ck in zip(process_dirs, dir_check) if not ck]
-        raise IOError('Directories not found: {}'.format(', '.join(missing)))
-
-    # load list of files and pull out jpeg files
-    image_dir_contents = {dr: os.listdir(dr) for dr in process_dirs}
-    image_dir_jpegs = {dr: [fl for fl in cont if fl.lower().endswith('jpg')]
-                       for dr, cont in image_dir_contents.items()}
-
-    # report on what is found
-    for im_dir in process_dirs:
-        n_files = len(image_dir_contents[im_dir])
-        n_jpegs = len(image_dir_jpegs[im_dir])
-        msg = ' - Found {} containing {} JPEG images\n'.format(im_dir, n_jpegs)
-        sys.stdout.write(msg)
-        if n_files != n_jpegs:
-            extra = ', '.join(set(image_dir_contents[im_dir]) - set(image_dir_jpegs[im_dir]))
-            msg = ' *!* {} non-image files or folders also found: {}\n'
-            sys.stdout.write(msg.format(n_files - n_jpegs, extra))
 
     # check the output root directory
     if not os.path.isdir(output_root):
         raise IOError('Output root directory not found')
 
+    # Check image and calib directories exist and are directories
+    input_dirs = image_dirs + calib_dirs
+    bad_dir = [dr for dr in input_dirs if not os.path.isdir(dr)]
+    if bad_dir:
+        raise IOError('Directories not found: {}'.format(', '.join(bad_dir)))
+
     # get an exifread.ExifTool instance
     et = exiftool.ExifTool()
     et.start()
-
-    # track earliest date
-    min_date = datetime.datetime(9999, 12, 31, 23, 59, 59)
-
-    # dictionary to hold new names
-    new_files = {}
-
-    # now scan the files to get new names, a folder at a time
-    # to keep any calib images held separately
-    for path, files in image_dir_jpegs.items():
-
-        sys.stdout.write(' - Scanning EXIF data for {}\n'.format(path))
-        sys.stdout.flush()
-
-        # get full paths
-        files = [os.path.join(path, fl) for fl in files]
-
-        # get creation date and sequence tag from EXIF
-        tags = ['EXIF:CreateDate', u'MakerNotes:Sequence']
-        tag_data = et.get_tags_batch(tags, files)
-
-        # check tags found and report first five file names
-        date_missing = [fl for fl, tg in zip(files, tag_data) if 'EXIF:CreateDate' not in tg]
-        seq_missing = [fl for fl, tg in zip(files, tag_data) if 'MakerNotes:Sequence' not in tg]
-
-        if len(date_missing):
-            n_missing = len(date_missing)
-            report_n = min(5, n_missing)
-            report_missing = ','.join(date_missing[0:report_n])
-            if report_n < n_missing:
-                report_missing += ", ..."
-
-            raise RuntimeError(
-                '{} files missing CreateDate tag: {}'.format(n_missing, report_missing))
-
-        if len(seq_missing):
-            n_missing = len(seq_missing)
-            report_n = min(5, n_missing)
-            report_missing = ','.join(seq_missing[0:report_n])
-            if report_n < n_missing:
-                report_missing += ", ..."
-
-            raise RuntimeError(
-                '{} files missing Sequence tag: {}'.format(n_missing, report_missing))
-
-        create_date = [datetime.datetime.strptime(td['EXIF:CreateDate'], '%Y:%m:%d %H:%M:%S')
-                       for td in tag_data]
-
-        # in burst mode, time to seconds is not unique, so add sequence number
-        sequence = ['_' + td[u'MakerNotes:Sequence'].split()[0] for td in tag_data]
-
-        # update earliest date
-        if min(create_date) < min_date:
-            min_date = min(create_date)
-
-        # update the dictionaries
-        image_dir_jpegs[path] = files
-        new_files[path] = [location + "_" + dt.strftime("%Y%m%d_%H%M%S") + seq + ".jpg"
-                           for dt, seq in zip(create_date, sequence)]
-
+    
+    # Process image folders
+    image_data = [_process_folder(f, location, et, report_n) for f in image_dirs]
+    dates = [dat[1] for dat in image_data]
+    files = [dat[0] for dat in image_data]
+    files = [item for sublist in files for item in sublist]
+    
+    # Process calibration folders
+    if calib_dirs is not None:
+        calib_data = [_process_folder(f, location, et, report_n) for f in calib_dirs]
+        dates += [dat[1] for dat in calib_data]
+        calib_files = [dat[0] for dat in calib_data]
+        calib_files = [item for sublist in calib_files for item in sublist]
+        files += [(src, os.path.join('CALIB', dest)) for src, dest in calib_files]
+    
     # Look for file name collisions across the whole set
-    all_new_file_names = sum(new_files.values(), [])
+    all_new_file_names = [f[1] for f in files]
     if len(all_new_file_names) > len(set(all_new_file_names)):
         raise RuntimeError('Duplication found in new image names.')
 
-    # pop the calibration folder off the current and new names
-    if calib is not None:
-        calib_files = image_dir_jpegs.pop(calib)
-        calib_new_files = new_files.pop(calib)
-
     # get the final directory name and check it doesn't already exist
-    outdir = '{}_{}'.format(location, min_date.strftime("%Y%m%d"))
+    outdir = '{}_{}'.format(location, min(dates).strftime("%Y%m%d"))
     outdir = os.path.abspath(os.path.join(output_root, outdir))
     if os.path.exists(outdir):
         raise IOError('Output directory already exists:\n    {}'.format(outdir))
     else:
         os.mkdir(outdir)
-
-    # move the files
-    for im_dir in image_dirs:
-        source = image_dir_jpegs[im_dir]
-        destination = [os.path.join(outdir, fl) for fl in new_files[im_dir]]
-        sys.stdout.write(' - Copying contents of {}\n'.format(im_dir))
+        if calib_dirs is not None:
+            os.mkdir(os.path.join(outdir, 'CALIB'))
+    
+    if copy:
+        # move the files and insert the original file location into the EXIF metadata
+        sys.stdout.write('Copying files:\n')
         sys.stdout.flush()
-
-        with progressbar.ProgressBar(max_value=len(source)) as bar:
-            for idx, (src, dst) in enumerate(zip(source, destination)):
+        
+        with progressbar.ProgressBar(max_value=len(files)) as bar:
+            for idx, (src, dst) in enumerate(files):
+                # Copy the file
+                dst = os.path.join(outdir, dst)
                 shutil.copyfile(src, dst)
+                # Insert original file name into EXIF data
+                tag_data = f'-XMP-xmpMM:PreservedFileName={src}'
+                et.execute(b'-overwrite_original', tag_data.encode('utf-8'), exiftool.fsencode(dst))
                 bar.update(idx)
-
-    # create and move the calibration folder
-    if calib is not None:
-        os.mkdir(os.path.join(outdir, 'calib'))
-        calib_new_files = [os.path.join(outdir, 'calib', fl) for fl in calib_new_files]
-        sys.stdout.write(' - Copying contents of {}\n'.format(calib))
-        sys.stdout.flush()
-
-        with progressbar.ProgressBar(max_value=len(calib_files)) as bar:
-            for idx, (src, dst) in enumerate(zip(calib_files, calib_new_files)):
-                shutil.copyfile(src, dst)
-                bar.update(idx)
-
+    
     # tidy up
     et.terminate()
 
@@ -191,22 +175,32 @@ def main():
     """
 
     parser = argparse.ArgumentParser(description=main.__doc__)
-    parser.add_argument('location',
+    parser.add_argument('location', type=str, 
                         help='A SAFE location code from the gazetteer that will be '
                              'used in the folder and file names.')
-    parser.add_argument('output_root',
+    parser.add_argument('output_root', type=str, 
                         help='A path to the directory where the deployment folder '
                              'is to be created.')
-    parser.add_argument('directories', metavar='N', type=str, nargs='+',
+    parser.add_argument('directories', metavar='dir', type=str, nargs='+',
                         help='Paths for each directory to be included in the deployment folder.')
-    parser.add_argument('-c', '--calib', default=None,
+    parser.add_argument('-c', '--calib', default=None, type=str, action='append',
                         help='A path to a folder of calibration images for the '
-                             'deployment.')
+                             'deployment. This option can be used multiple times'
+                             'to include more than one folder of calibration images.')
+    parser.add_argument('--copy', action='store_true',
+                        help='By default, the program runs checking and prints out '
+                             'validation messages. It will only actually copy new '
+                             'files into their new locations if this option is specified.')
+    parser.add_argument('--report', type=int, default=5,
+                        help='If key EXIF tags are missing, up to this many problem filenames '
+                             'are provided to help troubleshoot.')
+
 
     args = parser.parse_args()
 
-    process_deployment(image_dirs=args.directories, calib=args.calib,
-                       location=args.location, output_root=args.output_root)
+    process_deployment(image_dirs=args.directories, calib_dirs=args.calib,
+                       location=args.location, output_root=args.output_root,
+                       copy=args.copy, report_n=args.report)
 
 
 if __name__ == "__main__":
