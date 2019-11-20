@@ -47,7 +47,7 @@ D100-1-11_20150612/
 
 The original file path for the file is stored in the image in the EXIF data, under the `PreservedFileName` tag.
 
-### Usage
+### Usage 
 
 The usage notes for using `process_deployment.py` from the command line are:
 
@@ -81,3 +81,66 @@ The usage notes for using `process_deployment.py` from the command line are:
       --report REPORT       If key EXIF tags are missing, up to this many problem
                             filenames are provided to help troubleshoot.
 
+### Example
+
+The repository includes a small `test` directory holding 3 image folders (`test/a`, `test/b`, `test/c`) and 2 calibration folders (`test/cal1`, `test/cal2`). There is only a single image in each, although `test/a` also contains a non-JPEG file.
+
+```
+test/a:
+    Image_1.jpg
+    badfile.png
+test/b:
+    Image_1.jpg
+test/c:
+    Image_1.jpg
+test/cal1:
+    Calib_1.jpg
+test/cal2:
+    Calib_1.jpg
+```
+
+Using `process_deployment` to handle this test dataset consists of:
+
+1. Create a root directory to hold the restructured deployment:
+
+        mkdir deployments
+
+2. Run the tool, specifiying the location (e.g. `F100-1-1`) and the new output folder:
+
+        python3 ./process_deployment.py F100-1-1 deployments test/a test/b test/c -c test/cal1 -c test/cal2 --copy
+
+This should print the following output:
+
+```
+Processing directory: test/a
+ - Found 1 JPEG files
+ - *!* Found 1 other files: badfile.png
+ - Scanning EXIF data
+Processing directory: test/b
+ - Found 1 JPEG files
+ - Scanning EXIF data
+Processing directory: test/c
+ - Found 1 JPEG files
+ - Scanning EXIF data
+Processing directory: test/cal1
+ - Found 1 JPEG files
+ - Scanning EXIF data
+Processing directory: test/cal2
+ - Found 1 JPEG files
+ - Scanning EXIF data
+Copying files:
+100% (5 of 5) |######################| Elapsed Time: 0:00:00 Time:  0:00:00
+```
+
+The result will be the following folder structure in `deployments`:
+
+```
+deployments/F100-1-1_20160518:
+CALIB
+F100-1-1_20160518_202256_1.jpg
+F100-1-1_20160518_202257_2.jpg
+F100-1-1_20160518_202258_3.jpg
+deployments//F100-1-1_20160518/CALIB:
+F100-1-1_20160518_202258_4.jpg
+F100-1-1_20160518_202259_5.jpg
+```
