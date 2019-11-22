@@ -255,8 +255,12 @@ def extract_deployment_data(deployment, outfile=None):
         if entry['Keywords'] is None:
             entry['Keywords'] = {}
         else:
+            # Single keywords can be loaded as a string not a list of string
+            keywords = entry['Keywords']
+            if isinstance(keywords, str):
+                keywords = [keywords]
             # Split the strings on colons
-            kw_list = [kw.split(':') for kw in entry['Keywords']]
+            kw_list = [kw.split(':') for kw in keywords]
             # Sort and group on tag number
             kw_list.sort(key=lambda x: x[0])
             kw_groups = groupby(kw_list, key=lambda x: x[0])
