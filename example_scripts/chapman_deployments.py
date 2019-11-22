@@ -1,7 +1,7 @@
 import os
 import re
 from itertools import groupby
-from safe_camera_trap_tools.process_deployment import process_deployment
+import safe_camera_trap_tools
 
 # Phil's folders are arranged as:
 # /201X/Block/Loc
