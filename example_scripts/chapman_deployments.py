@@ -1,7 +1,7 @@
 import os
 import re
 from itertools import groupby
-import safe_camera_trap_tools
+import safe_camera_trap_tools as sctt
 
 # Phil's folders are arranged as:
 # /201X/Block/Loc
@@ -57,5 +57,9 @@ for ky, dirs in groups.items():
     if not os.path.exists(outdir):
         os.mkdir(outdir)
     
-    process_deployment(image_dirs, location, outdir, 
-                       calib_dirs=calib_dirs, copy=copy)
+    deployment_dir = sctt.process_deployment(image_dirs, location, outdir, 
+                                             calib_dirs=calib_dirs, copy=copy)
+    
+    # These files have already been annotated, so extract the deployment data
+    # into the deployment folder
+    sctt.extract_deployment_data(deployment_dir)

@@ -108,7 +108,7 @@ def process_deployment(image_dirs, location, output_root, calib_dirs=[], copy=Fa
         copy: Boolean
 
     Returns:
-        None
+        The name of the resulting deployment directory
     """
 
     # check the output root directory
@@ -144,18 +144,18 @@ def process_deployment(image_dirs, location, output_root, calib_dirs=[], copy=Fa
     if len(all_new_file_names) > len(set(all_new_file_names)):
         raise RuntimeError('Duplication found in new image names.')
     
+    
+    # get the final directory name and check it doesn't already exist
+    outdir = '{}_{}'.format(location, min(dates).strftime("%Y%m%d"))
+    outdir = os.path.abspath(os.path.join(output_root, outdir))
+    if os.path.exists(outdir):
+        raise IOError('Output directory already exists:\n    {}'.format(outdir))
+    elif copy:
+        os.mkdir(outdir)
+        if calib_dirs is not None:
+            os.mkdir(os.path.join(outdir, 'CALIB'))
+
     if copy:
-        
-        # get the final directory name and check it doesn't already exist
-        outdir = '{}_{}'.format(location, min(dates).strftime("%Y%m%d"))
-        outdir = os.path.abspath(os.path.join(output_root, outdir))
-        if os.path.exists(outdir):
-            raise IOError('Output directory already exists:\n    {}'.format(outdir))
-        else:
-            os.mkdir(outdir)
-            if calib_dirs is not None:
-                os.mkdir(os.path.join(outdir, 'CALIB'))
-        
         # move the files and insert the original file location into the EXIF metadata
         print('Copying files:\n', file=sys.stdout, flush=True)
         
@@ -171,6 +171,8 @@ def process_deployment(image_dirs, location, output_root, calib_dirs=[], copy=Fa
     
     # tidy up
     et.terminate()
+    
+    return outdir
 
 
 def extract_deployment_data(deployment, outfile=None):
