@@ -338,6 +338,11 @@ def extract_deployment_data(deployment, outfile=None):
         # Get the unique tagged locations
         locations = set(exif_fields['Tag_15'])
         
+        # Check for missing location tags (Tag_15: None) and remove
+        if None in locations:
+            print(f'  ! Some images lack location tags.', file=sys.stderr, flush=True)
+            locations = list(filter(None.__ne__, locations))
+        
         # Are they consistent with the deployment folder
         match_folder = [os.path.basename(deployment).startswith(l) for l in locations]
         
