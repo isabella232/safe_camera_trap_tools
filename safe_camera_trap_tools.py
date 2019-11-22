@@ -192,35 +192,35 @@ def extract_deployment_data(deployment, outfile=None):
     et = exiftool.ExifTool()
     et.start()
 
-    # Check the deployment folder exists
+    # Check if the deployment folder and calib folder exist and store
+    # in a dictionary keyed by calibration flag
+    exif_dirs = {}
     if not os.path.exists(deployment) and os.path.isdir(deployment):
         raise IOError('Deployment path does not exist or is not a directory.')
-
+    else:
+        exif_dirs[0] = deployment
+    
+    calib_dir = os.path.join(deployment, 'CALIB')
+    if os.path.exists(calib_dir) and os.path.isdir(calib_dir):
+        exif_dirs[1] = calib_dir
+    
+    # Get the output folder
     if outfile is None:
-        outfile = os.path.join(deployment, 'exif_data.csv')
+        outfile = os.path.join(deployment, 'exif_data.dat')
 
     print(f'Extracting EXIF data from {deployment}', file=sys.stdout, flush=True)
 
     # Find images, extract EXIF data and flag as non-calibration images
-    images = os.listdir(deployment)
-    images = [im for im in images if im.lower().endswith('.jpg')]
-    images_exif = et.get_metadata_batch([os.path.join(deployment, im) for im in images])
-    _ =[entry.update({'Calib': 0}) for entry in images_exif]
-
-    # check for any calibration images
-    calib_dir = os.path.join(deployment, 'CALIB')
-    if os.path.exists(calib_dir):
-        # get exif data from calibration images
-        calib = os.listdir(calib_dir)
-        calib = [im for im in calib if im.lower().endswith('.jpg')]
-        calib_exif = et.get_metadata_batch([os.path.join(calib_dir, im) for im in calib])
-        _ =[entry.update({'Calib': 1}) for entry in calib_exif]
-    else:
-        calib_exif = []
-    
-    # Combine and continue
-    exif = images_exif + calib_exif
-    n_exif = len(exif)
+    exif = []
+    for calib_flag, this_dir in exif_dirs.items():
+        # Get the JPEG files
+        images = os.listdir(this_dir)
+        images = [im for im in images if im.lower().endswith('.jpg')]
+        # If there are any images, get the exif data, flag as calib or not and add to the pile
+        if images:
+            this_exif = et.get_metadata_batch([os.path.join(this_dir, im) for im in images])
+            _ =[entry.update({'Calib': calib_flag}) for entry in this_exif]
+            exif += this_exif
     
     # Reduce to tags used in rest of the script, filling in blanks and simplifying tag names
     keep_tags = ['EXIF:Make', 'EXIF:Model', 'MakerNotes:SerialNumber', 'Calib',
@@ -290,6 +290,7 @@ def extract_deployment_data(deployment, outfile=None):
     # Get dictionary of fields - processing so far using dict.get(vl, None)
     # should ensure that all keys are present for all files.
     exif_fields = {k: [dic[k] for dic in exif] for k in exif[0]}
+    n_exif = len(exif)
     
     # DEPLOYMENT level data
     print('Checking for consistent deployment data', file=sys.stdout, flush=True)
@@ -360,8 +361,8 @@ def extract_deployment_data(deployment, outfile=None):
         dep_data['location'] = locations
     
     # Add the number of images
-    dep_data['n_images'] = len(images_exif)
-    dep_data['n_calib'] = len(calib_exif)
+    dep_data['n_images'] = n_exif - sum(exif_fields['Calib'])
+    dep_data['n_calib'] = n_exif - dep_data['n_images']
     
     # print to screen to report
     print('Deployment data:', file=sys.stdout, flush=True)
