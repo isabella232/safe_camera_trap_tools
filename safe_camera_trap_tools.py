@@ -222,6 +222,10 @@ def extract_deployment_data(deployment, outfile=None):
             _ =[entry.update({'Calib': calib_flag}) for entry in this_exif]
             exif += this_exif
     
+    if len(exif) == 0:
+        print(f'No images found in {deployment}', file=sys.stdout, flush=True)
+        return None
+    
     # Reduce to tags used in rest of the script, filling in blanks and simplifying tag names
     keep_tags = ['EXIF:Make', 'EXIF:Model', 'MakerNotes:SerialNumber', 'Calib',
                  'MakerNotes:FirmwareDate', 'File:ImageHeight', 'File:ImageWidth',
