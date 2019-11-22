@@ -1,30 +1,41 @@
-# safe_camera_trap_tools
+# The `safe_camera_trap_tools` package
 
-Camera traps are a common research tool at the SAFE Project and we want to make sure that camera trap data is well documented and easy to share. This repository contains two simple tools to help researchers standardise the folder structure of camera trap images into deployments and to extract EXIF data from marked up images into a standard format.
+Camera traps are a common research tool at the SAFE Project and we want to make sure that camera trap data is well documented and easy to share. This Python 3 package contains two simple tools to help researchers standardise the folder structure of camera trap images into deployments and to extract EXIF data from marked up images into a standard format.
 
 ## Requirements
 
-You will need an installation of Python along with the standard library. You will need to use Python 3.6 or more recent.
+You will need an installation of Python 3.6 or more recent along with the standard library. 
 
-Both tools require the PERL program `exiftool` to be installed:  
+### Exiftool
+
+Image metadata and animal tagging in camera trap images are stored in EXIF data: a set of metadata tags stored within the image file. EXIF data is surprisingly annoying to read in Python. Many libraries exist but few handle much beyond a standard set of tags, leaving a lot of information either unread or as raw hex. The Perl program `exiftool`, which is backed by a gigantic library of tag identifications, is much more powerful. 
+
+Fortunately, it is easily installed:
 
 [https://www.sno.phy.queensu.ca/~phil/exiftool](https://www.sno.phy.queensu.ca/~phil/exiftool)
 
-This program is widely supported across platforms and provides fantastic support for reading EXIF data from images. EXIF data is messy - there are some standard tags but hardware and software manufacturers can make up their own tags, which often contain important information: `exiftool` includes a unique database of EXIF tags and possible values from a very wide range of sources.
+### Python packages
 
-This also means that Python needs to be able to talk to `exifttool`. For this, the program uses a simple interface package which can be installed as follows:
+Using `exiftool` also means that Python needs to be able to talk to it. This requires the installation of the `exiftool` python package, which is available via `pip` as `ocrd-pyexiftool`. The package also uses the `progressbar2` package to report file copying progress,
 
 ```bash
 pip install ocrd-pyexiftool
+pip install progressbar2
 ```
+
+## Commands
+
+The package contains two core functions: `process_deployment` and `extract_deployment_data`. Both functions are available from within python for use in programs and scripts and as stand-alone command line tools.
 
 ## process_deployment
 
-A **deployment** is simply the whole process of putting out a camera trap in a single location for a period of time. This could be for a few days or could be for a month, but this is the basic organisational unit: a point in space and a time period.
+A **deployment** is simply the whole process of putting out a camera trap in a single location for a period of time. This could be for a few days or could be for a month, but this is the basic organisational unit: a location and a time period.
 
 In practice, the camera trap isn't usually just sitting there undisturbed for the whole period. The batteries might need changing, you might run a set of calibration images, the memory card might fill up. The end result is that as a field user, you're almost certainly going to end up with more than one folder of images for a single deployment. If the camera has reset a counter then some of the files in those folders may have the same names (e.g. `IMG_0001.JPG`). Even if this deployment doesn't have the same names, those names are certainly going to crop up in other deployments.
 
 So, this tool takes a location name from the SAFE gazetteer, an output root directory and a set of camera trap image folder names and builds a new single folder containing all the images, with standard informative names. If you have folders of calibration images for a deployment, these will be included in the `CALIB` sub-folder.
+
+**Note**: `process_deployment` does not remove or edit the original folders and images. It also preserves the original file path for an image in the EXIF data of the copied file, under the `PreservedFileName` tag. 
 
 The standard name structure that will be created by the tool is:
 
@@ -45,41 +56,42 @@ D100-1-11_20150612/
     ...
 ```
 
-The original file path for the file is stored in the image in the EXIF data, under the `PreservedFileName` tag.
-
 ### Usage 
 
-The usage notes for using `process_deployment.py` from the command line are:
+The usage notes for using `process_deployment` are:
 
-    process_deployment.py [-h] [-c CALIB] [--copy] [--report REPORT]
+```sh
+usage: process_deployment [-h] [-c CALIB] [--copy]
                           location output_root dir [dir ...]
 
-    This program consolidates a set of camera trap image folders from a single
-    deployment into a single folder, renaming the images to a standardised format.
-    It does _not_ alter the original folders: all of the images are copied into a
-    new folder. It also checks that all of the new images are getting unique names
-    before starting to copy files.
-    
-    positional arguments:
-      location              A SAFE location code from the gazetteer that will be
-                            used in the folder and file names.
-      output_root           A path to the directory where the deployment folder is
-                            to be created.
-      dir                   Paths for each directory to be included in the
-                            deployment folder.
-    
-    optional arguments:
-      -h, --help            show this help message and exit
-      -c CALIB, --calib CALIB
-                            A path to a folder of calibration images for the
-                            deployment. This option can be used multiple times to
-                            include more than one folder of calibration images.
-      --copy                By default, the program runs checking and prints out
-                            validation messages. It will only actually copy new
-                            files into their new locations if this option is
-                            specified.
-      --report REPORT       If key EXIF tags are missing, up to this many problem
-                            filenames are provided to help troubleshoot.
+Compiles folders of images collected from a camera trap into a single deployment folder in
+the 'output_root' directory. The deployment folder name is a combination of the provided
+'location' name and the earliest date recorded in the EXIF:CreateDate tags in the images. A set
+of folders of calibration images can also be provided, which are moved into a single CALIB
+directory within the new deployment directory.
+
+When 'copy' is False, which is the default, the image directories are scanned and validated but
+the new deployment directory is not created or populated. The new deployment directory is only
+created when 'copy' is True. Note that the function **does not delete** the source files when
+compiling the new deployment folder.
+
+positional arguments:
+  location              A SAFE location code from the gazetteer that will be
+                        used in the folder and file names.
+  output_root           A path to the directory where the deployment folder is
+                        to be created.
+  dir                   Paths for each directory to be included in the
+                        deployment folder.
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -c CALIB, --calib CALIB
+                        A path to a folder of calibration images. Can be
+                        repeated to provide more than one folder of
+                        calibration images.
+  --copy                Use to actually create the deployment rather than just
+                        validate.
+```
 
 ### Example
 
@@ -107,7 +119,8 @@ Using `process_deployment` to handle this test dataset consists of:
 
 2. Run the tool, specifiying the location (e.g. `F100-1-1`) and the new output folder:
 
-        python3 ./process_deployment.py F100-1-1 deployments test/a test/b test/c -c test/cal1 -c test/cal2 --copy
+        python3 ./process_deployment.py F100-1-1 deployments test/a test/b test/c \
+                -c test/cal1 -c test/cal2 --copy
 
 This should print the following output:
 
@@ -144,3 +157,28 @@ deployments//F100-1-1_20160518/CALIB:
 F100-1-1_20160518_202258_4.jpg
 F100-1-1_20160518_202259_5.jpg
 ```
+
+## `extract_deployment_data`
+
+This extracts EXIF data from the images and calibration images within a deployment folder and creates a text output file containing key EXIF fields. In particular, it looks for the `IPTC:Keywords` tag. This field is used to store image annotation data, following a set of numeric tags, for example `15: F100-1-1` records the location, `1: Crested Fireback` records a species in an image and `24: Phil` records that Phil Chapman assessed the image.
+
+The command runs some simple validation to check that the deployment details are consistent and then saves a tab-delimited text file. Deployment level data (camera type, start date, etc) are written as a header and then a table of image data follows a separator line ('---').
+
+### Usage
+
+```
+usage: extract_deployment_data [-h] [-o OUTFILE] deployment
+
+This script takes a single deployment folder and extracts EXIF data for the deployment
+into a tab delimited file. By default, the data is written to a file `exif_data.dat` 
+within the deployment directory.
+
+positional arguments:
+  deployment            A path to a deployment directory
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -o OUTFILE, --outfile OUTFILE
+                        An output file name
+```
+
