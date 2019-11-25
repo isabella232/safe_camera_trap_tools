@@ -25,7 +25,7 @@ pip install progressbar2
 
 ## Commands
 
-The package contains two core functions: `process_deployment` and `extract_deployment_data`. Both functions are available from within python for use in programs and scripts and as stand-alone command line tools.
+The package contains two core functions: `process_deployment` and `extract_deployment_data`. Both functions are available from within python for use in programs and scripts and as stand-alone command line tools. In fact, `process_deployment` is a simple wrapper around 2 functions: `gather_deployment_files` collects information on the files to be collated and `create_deployment` does the job of copying the files into the new location. These are separate functions within the module to provide flexibility (such as creating annual subfolders) but bundled together in the command line interface.
 
 ## process_deployment
 

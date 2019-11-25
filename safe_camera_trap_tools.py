@@ -87,90 +87,109 @@ def _process_folder(image_dir, location, et):
         return([], datetime.datetime(1,1,1))
 
 
-def process_deployment(image_dirs, location, output_root, calib_dirs=[], copy=False):
+def gather_deployment_files(image_dirs, location, calib_dirs=[]):
 
-    """Compiles folders of images collected from a camera trap into a single deployment folder in
-    the 'output_root' directory. The deployment folder name is a combination of the provided
-    'location' name and the earliest date recorded in the EXIF:CreateDate tags in the images. A set
-    of folders of calibration images can also be provided, which are moved into a single CALIB
-    directory within the new deployment directory.
+    """Takes a set of image directories and a location name and returns a dictionary of the source
+    and destination file name pairs, the earliest recorded image creation date (which is used to
+    label the deployment) and the provided location (also used in the deployment name).
     
-    When 'copy' is False, which is the default, the image directories are scanned and validated but
-    the new deployment directory is not created or populated. The new deployment directory is only
-    created when 'copy' is True. Note that the function **does not delete** the source files when
-    compiling the new deployment folder.
-
+    Optionally, a list of directories containing calibration images can also be provided, to
+    be stored in a 'CALIB' directory within the deployment directory.
+    
     Args:
         image_dirs: A list of directories containing camera trap images
         location: The name of the location to be used as the deployment name
-        output_root: The location to compile the deployment folder to
         calib: An optional list of directories of calibration images.
-        copy: Boolean
-
-    Returns:
-        The name of the resulting deployment directory
+    
+    Returns: 
+        A dictionary:
+        * 'files': a list of (dest, src) filename tuples
+        * 'date': the earliest recorded image creation date in the image files
+        * 'location': the provided location
+        * 'calib': A boolean to show if calibration images folders are included
     """
-
-    # check the output root directory
-    if not os.path.isdir(output_root):
-        raise IOError('Output root directory not found')
-
+    
     # Check image and calib directories exist and are directories
     input_dirs = image_dirs + calib_dirs
     bad_dir = [dr for dr in input_dirs if not os.path.isdir(dr)]
     if bad_dir:
         raise IOError('Directories not found: {}'.format(', '.join(bad_dir)))
+        
+    if len(set(input_dirs)) < len(input_dirs):
+        raise IOError('Same folder in both image and calibration directory lists')
 
     # get an exifread.ExifTool instance
     et = exiftool.ExifTool()
     et.start()
     
-    # Process image folders
-    image_data = [_process_folder(f, location, et) for f in image_dirs]
-    dates = [dat[1] for dat in image_data]
-    files = [dat[0] for dat in image_data]
-    files = [item for sublist in files for item in sublist]
-    
-    # Process calibration folders
-    if calib_dirs is not None:
-        calib_data = [_process_folder(f, location, et) for f in calib_dirs]
-        dates += [dat[1] for dat in calib_data]
-        calib_files = [dat[0] for dat in calib_data]
-        calib_files = [item for sublist in calib_files for item in sublist]
-        files += [(src, os.path.join('CALIB', dest)) for src, dest in calib_files]
+    # Process the folders, collecting earliest dates and a list of file (src, dest) tuples
+    dates = []
+    files = []
+    for this_dir in input_dirs:
+        
+        these_files, this_date = _process_folder(this_dir, location, et)
+        if this_dir in calib_dirs:
+            these_files = [(src, os.path.join('CALIB', dest)) for src, dest in these_files]
+        dates.append(this_date)
+        files.extend(this_files)
     
     # Look for file name collisions across the whole set
     all_new_file_names = [f[1] for f in files]
     if len(all_new_file_names) > len(set(all_new_file_names)):
         raise RuntimeError('Duplication found in new image names.')
     
+    # tidy up
+    et.terminate()
+    
+    return {'files': files, 'date': min(dates), 'location': location, 
+            'calib': if calib_dirs True else False}
+
+
+def create_deployment(gathered_files, output_root):
+    
+    """Takes the output of running `gather_deployment_files` on a set of image folders and copies
+    the set of files from the named sources to the new deployment image names within a single
+    deployment folder in the 'output_root' directory. The deployment folder name is a combination
+    of the provided 'location' name and the earliest date recorded in the EXIF:CreateDate tags in
+    the images.
+    
+    Note that the function **does not delete** the source files when compiling the new deployment
+    folder.
+
+    Args:
+        gathered_files: The output of running `gather_deployment_files`
+        output_root: The location to compile the deployment folder to
+    
+    Returns:
+        The name of the resulting deployment directory
+    """
+    
+    # check the output root directory
+    if not os.path.isdir(output_root):
+        raise IOError('Output root directory not found')
     
     # get the final directory name and check it doesn't already exist
-    outdir = '{}_{}'.format(location, min(dates).strftime("%Y%m%d"))
+    outdir = f"{gathered_files['location']}_{gathered_files['date'].strftime('%Y%m%d')}"
     outdir = os.path.abspath(os.path.join(output_root, outdir))
     if os.path.exists(outdir):
         raise IOError('Output directory already exists:\n    {}'.format(outdir))
-    elif copy:
+    else:
         os.mkdir(outdir)
-        if calib_dirs is not None:
+        if gathered_files['calib']:
             os.mkdir(os.path.join(outdir, 'CALIB'))
 
-    if copy:
-        # move the files and insert the original file location into the EXIF metadata
-        print('Copying files:\n', file=sys.stdout, flush=True)
-        
-        with progressbar.ProgressBar(max_value=len(files)) as bar:
-            for idx, (src, dst) in enumerate(files):
-                # Copy the file
-                dst = os.path.join(outdir, dst)
-                shutil.copyfile(src, dst)
-                # Insert original file name into EXIF data
-                tag_data = f'-XMP-xmpMM:PreservedFileName={src}'
-                et.execute(b'-overwrite_original', tag_data.encode('utf-8'), exiftool.fsencode(dst))
-                bar.update(idx)
+    # move the files and insert the original file location into the EXIF metadata
+    print('Copying files:\n', file=sys.stdout, flush=True)
     
-    # tidy up
-    et.terminate()
+    with progressbar.ProgressBar(max_value=len(files)) as bar:
+        for idx, (src, dst) in enumerate(files):
+            # Copy the file
+            dst = os.path.join(outdir, dst)
+            shutil.copyfile(src, dst)
+            # Insert original file name into EXIF data
+            tag_data = f'-XMP-xmpMM:PreservedFileName={src}'
+            et.execute(b'-overwrite_original', tag_data.encode('utf-8'), exiftool.fsencode(dst))
+            bar.update(idx)
     
     return outdir
 
@@ -415,10 +434,8 @@ def _process_deployment_cli():
     of folders of calibration images can also be provided, which are moved into a single CALIB
     directory within the new deployment directory.
     
-    When 'copy' is False, which is the default, the image directories are scanned and validated but
-    the new deployment directory is not created or populated. The new deployment directory is only
-    created when 'copy' is True. Note that the function **does not delete** the source files when
-    compiling the new deployment folder.
+    Note that the function **does not delete** the source files when compiling the new deployment
+    folder.
     """
     
     desc = textwrap.dedent(_process_deployment_cli.__doc__)
@@ -436,14 +453,13 @@ def _process_deployment_cli():
     parser.add_argument('-c', '--calib', default=None, type=str, action='append',
                         help='A path to a folder of calibration images. Can be repeated to '
                              'provide more than one folder of calibration images.')
-    parser.add_argument('--copy', action='store_true',
-                        help='Use to actually create the deployment rather than just validate.')
-
+    
     args = parser.parse_args()
-
-    process_deployment(image_dirs=args.directories, calib_dirs=args.calib,
-                       location=args.location, output_root=args.output_root,
-                       copy=args.copy)
+    
+    gathered = gather_deployment_files(image_dirs=args.directories, calib_dirs=args.calib,
+                                       location=args.location)
+    
+    process_deployment(gathered, output_root=args.output_root)
 
 
 def _extract_deployment_data_cli():
