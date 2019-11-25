@@ -61,7 +61,7 @@ D100-1-11_20150612/
 The usage notes for using `process_deployment` are:
 
 ```sh
-usage: process_deployment [-h] [-c CALIB] [--copy]
+usage: process_deployment [-h] [-c CALIB] 
                           location output_root dir [dir ...]
 
 Compiles folders of images collected from a camera trap into a single deployment folder in
@@ -70,9 +70,7 @@ the 'output_root' directory. The deployment folder name is a combination of the 
 of folders of calibration images can also be provided, which are moved into a single CALIB
 directory within the new deployment directory.
 
-When 'copy' is False, which is the default, the image directories are scanned and validated but
-the new deployment directory is not created or populated. The new deployment directory is only
-created when 'copy' is True. Note that the function **does not delete** the source files when
+Note that the function **does not delete** the source files when
 compiling the new deployment folder.
 
 positional arguments:
@@ -89,8 +87,6 @@ optional arguments:
                         A path to a folder of calibration images. Can be
                         repeated to provide more than one folder of
                         calibration images.
-  --copy                Use to actually create the deployment rather than just
-                        validate.
 ```
 
 ### Example
@@ -119,8 +115,8 @@ Using `process_deployment` to handle this test dataset consists of:
 
 2. Run the tool, specifiying the location (e.g. `F100-1-1`) and the new output folder:
 
-        python3 ./process_deployment.py F100-1-1 deployments test/a test/b test/c \
-                -c test/cal1 -c test/cal2 --copy
+        process_deployment F100-1-1 deployments test/a test/b test/c \
+                -c test/cal1 -c test/cal2
 
 This should print the following output:
 

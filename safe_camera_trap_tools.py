@@ -131,7 +131,7 @@ def gather_deployment_files(image_dirs, location, calib_dirs=[]):
         if this_dir in calib_dirs:
             these_files = [(src, os.path.join('CALIB', dest)) for src, dest in these_files]
         dates.append(this_date)
-        files.extend(this_files)
+        files.extend(these_files)
     
     # Look for file name collisions across the whole set
     all_new_file_names = [f[1] for f in files]
@@ -142,7 +142,7 @@ def gather_deployment_files(image_dirs, location, calib_dirs=[]):
     et.terminate()
     
     return {'files': files, 'date': min(dates), 'location': location, 
-            'calib': if calib_dirs True else False}
+            'calib': True if calib_dirs else False}
 
 
 def create_deployment(gathered_files, output_root):
@@ -154,7 +154,8 @@ def create_deployment(gathered_files, output_root):
     the images.
     
     Note that the function **does not delete** the source files when compiling the new deployment
-    folder.
+    folder. The original file name of the image is stored in the destination image EXIF data in the
+    PreservedFileName tag.
 
     Args:
         gathered_files: The output of running `gather_deployment_files`
@@ -181,8 +182,12 @@ def create_deployment(gathered_files, output_root):
     # move the files and insert the original file location into the EXIF metadata
     print('Copying files:\n', file=sys.stdout, flush=True)
     
-    with progressbar.ProgressBar(max_value=len(files)) as bar:
-        for idx, (src, dst) in enumerate(files):
+    # get an exifread.ExifTool instance
+    et = exiftool.ExifTool()
+    et.start()
+    
+    with progressbar.ProgressBar(max_value=len(gathered_files['files'])) as bar:
+        for idx, (src, dst) in enumerate(gathered_files['files']):
             # Copy the file
             dst = os.path.join(outdir, dst)
             shutil.copyfile(src, dst)
@@ -190,6 +195,9 @@ def create_deployment(gathered_files, output_root):
             tag_data = f'-XMP-xmpMM:PreservedFileName={src}'
             et.execute(b'-overwrite_original', tag_data.encode('utf-8'), exiftool.fsencode(dst))
             bar.update(idx)
+    
+    # tidy up
+    et.terminate()
     
     return outdir
 
@@ -459,7 +467,7 @@ def _process_deployment_cli():
     gathered = gather_deployment_files(image_dirs=args.directories, calib_dirs=args.calib,
                                        location=args.location)
     
-    process_deployment(gathered, output_root=args.output_root)
+    create_deployment(gathered, output_root=args.output_root)
 
 
 def _extract_deployment_data_cli():
