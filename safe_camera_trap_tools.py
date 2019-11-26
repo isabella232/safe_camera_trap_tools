@@ -86,7 +86,7 @@ def _process_folder(image_dir, location, et):
         # Look for create date tag
         tg = u'EXIF:CreateDate'
         create_date = [td[tg] if tg in td else None for td in tag_data]
-        if None in create_date
+        if None in create_date:
             tag_missing = [fl for fl, cd in zip(files, create_date) if cd is None]
             if len(tag_missing):
                 n_missing = len(tag_missing)
