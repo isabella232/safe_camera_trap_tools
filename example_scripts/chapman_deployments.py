@@ -27,6 +27,8 @@ image_folders = [p for p in paths if regex.search(p) is not None]
 bad = []
 # Mangled date and time stamps - no species present
 bad.append('Chapman_camera_traps/2015/D100-2/D100-2-33 (1)')
+# Empty directory
+bad.append('Chapman_camera_traps/2016/D100-1/D100-1-22/')
 
 image_folders = [p for p in image_folders if p not in bad]
 
@@ -57,8 +59,8 @@ for ky, dirs in groups.items():
     if not os.path.exists(outdir):
         os.mkdir(outdir)
     
-    deployment_dir = sctt.process_deployment(image_dirs, location, outdir, 
-                                             calib_dirs=calib_dirs, copy=copy)
+    gathered = sctt.gather_deployment_files(image_dirs, location, calib_dirs=calib_dirs)
+    deployment_dir = sctt.create_deployment(gathered, output_root=outdir)
     
     # These files have already been annotated, so extract the deployment data
     # into the deployment folder
