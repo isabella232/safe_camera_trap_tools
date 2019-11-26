@@ -34,7 +34,7 @@ def _process_folder(image_dir, location, et):
 
     print(f'Processing directory: {image_dir}', file=sys.stdout, flush=True)
     
-    # Load list of files, ignoring nested directories and separate JPEGS
+    # Load list of files, ignoring nested directories and then separate JPEGS
     files =  next(os.walk(image_dir))[2]
     jpeg_files = [fl for fl in files if fl.lower().endswith('jpg')]
     other_files = set(files) - set(jpeg_files) 
@@ -58,22 +58,50 @@ def _process_folder(image_dir, location, et):
         tag_data = et.get_tags_batch(tags, paths)
 
         # check tags found and report first five file names
-        for tag_check in tags:
-            tag_missing = [fl for fl, tg in zip(files, tag_data) if tag_check not in tg]
+        report_n = 5
+        
+        # Look for Sequence tag, falling back to file names if sequence is missing
+        tg = u'MakerNotes:Sequence'
+        sequence = [td[tg] if tg in td else None for td in tag_data]
+        
+        if None in sequence:
+            # Look for sequence information embedded in the file names
+            regex = re.compile('\d+(?= of \d+.jpg)')
+            fseq = [regex.search(f) for f in jpeg_files]
+            fseq = [f[0] if f is not None else None for f in fseq]
+            
+            # merge with exif sequence data, preferring exif
+            sequence = [exval if exval is not None else fval for exval, fval in zip(sequence, fseq)]
+        
+        # Look to see if any sequences _still_ missing
+        if None in sequence:
+            tag_missing = [fl for fl, sq in zip(files, sequence) if sq is None]
             if len(tag_missing):
                 n_missing = len(tag_missing)
-                report_n = 5
                 report_missing = ','.join(tag_missing[0:report_n])
                 if report_n < n_missing:
                     report_missing += ", ..."
-                raise RuntimeError(f'{n_missing} files missing {tag_check} tag: {report_missing}')
+                raise RuntimeError(f'{n_missing} files missing sequence number: {report_missing}')
+
+        # Look for create date tag
+        tg = u'EXIF:CreateDate'
+        create_date = [td[tg] if tg in td else None for td in tag_data]
+        if None in create_date
+            tag_missing = [fl for fl, cd in zip(files, create_date) if cd is None]
+            if len(tag_missing):
+                n_missing = len(tag_missing)
+                
+                report_missing = ','.join(tag_missing[0:report_n])
+                if report_n < n_missing:
+                    report_missing += ", ..."
+                raise RuntimeError(f'{n_missing} files missing creation date tag: {report_missing}')
+        
     
         # Generate new file names:
         # a) Get file datetimes
         create_date = [datetime.datetime.strptime(td['EXIF:CreateDate'], '%Y:%m:%d %H:%M:%S')
                        for td in tag_data]
         # b) in burst mode, time to seconds is not unique, so add sequence number
-        sequence = ['_' + td[u'MakerNotes:Sequence'].split()[0] for td in tag_data]
         # c) put those together
         new_name = [location + "_" + dt.strftime("%Y%m%d_%H%M%S") + seq + ".jpg"
                     for dt, seq in zip(create_date, sequence)]
@@ -466,7 +494,6 @@ def _process_deployment_cli():
     
     gathered = gather_deployment_files(image_dirs=args.directories, calib_dirs=args.calib,
                                        location=args.location)
-    
     create_deployment(gathered, output_root=args.output_root)
 
 
