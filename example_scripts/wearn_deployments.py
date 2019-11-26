@@ -343,20 +343,28 @@ deployments.append({'loc': "Arboreal",
 # PROCESS THE SET OF DEPLOYMENTS
 #
 
+failed = []
+
 for dep in deployments:
     
-    # process the deployment
-    gathered = sctt.gather_deployment_files(dep['images'], dep['loc'], dep['calib'])
+    try:
+        # process the deployment
+        gathered = sctt.gather_deployment_files(dep['images'], dep['loc'], dep['calib'])
     
-    # Create the output directory
-    year = gathered['date'].strftime('%Y')
-    outdir = os.path.join('deployments', year)
-    if not os.path.exists(outdir):
-        os.mkdir(outdir)
+        # Create the output directory
+        year = gathered['date'].strftime('%Y')
+        outdir = os.path.join('deployments', year)
+        if not os.path.exists(outdir):
+            os.mkdir(outdir)
     
-    # Now copy the files across
-    deployment_dir = sctt.create_deployment(gathered, output_root=outdir)
+        # Now copy the files across
+        deployment_dir = sctt.create_deployment(gathered, output_root=outdir)
     
-    # These files have already been annotated, so extract the deployment data
-    # into the deployment folder
-    sctt.extract_deployment_data(deployment_dir)
+        # These files have already been annotated, so extract the deployment data
+        # into the deployment folder
+        sctt.extract_deployment_data(deployment_dir)
+        
+    except RuntimeError:
+        failed.append(dep)
+
+print(failed)
