@@ -256,7 +256,7 @@ def validate_folder(image_dir):
     if any([len(x) > 1 for x in folder_data.values()]):
         issues.append("camera_data_inconsistent")
     
-    if None in [item for sublist in dep_data.values() for item in sublist]:
+    if None in [item for sublist in folder_data.values() for item in sublist]:
         issues.append("camera_data_incomplete")
     
     # b) Check location data (the only keyword tag that should be constant within a folder)
@@ -335,7 +335,7 @@ def validate_folder(image_dir):
     # Add image names to image data
     exif_fields['file'] = images
     
-    return {'issues': issues, 'folder_data': dep_data, 
+    return {'issues': issues, 'folder_data': folder_data, 
             'image_data': exif_fields, 'other_files': other_files, 
             'image_dir': image_dir, 'keyword_tags': keyword_tags}
 
