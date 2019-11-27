@@ -5,7 +5,6 @@ import datetime
 import csv
 import shutil
 from itertools import groupby
-from collections import OrderedDict
 import textwrap
 import re
 import exiftool
@@ -115,6 +114,232 @@ def _process_folder(image_dir, location, et):
         return([], datetime.datetime(1,1,1))
 
 
+
+def _convert_keywords(keywords):
+    
+    """ Unpacks a list of keywords into a dictionary. The keywords are strings with the format
+    'tag_number: value', where tag number can be repeated. The process below combines duplicate tag
+    numbers and strips whitespace padding.
+    
+    For example:
+        ['15: E100-2-23', '16: Person', '16: Setup', '24: Phil']
+    goes to
+        {'Tag_15': 'E100-2-23', 'Tag_16': 'Person, Setup', 'Tag_24': 'Phil'}
+    """
+    
+    if keywords is None:
+        return {}
+    
+    if isinstance(keywords, str):
+        keywords = [keywords]
+    
+    # Split the strings on colons
+    kw_list = [kw.split(':') for kw in keywords]
+    
+    # Sort and group on tag number
+    kw_list.sort(key=lambda x: x[0])
+    kw_groups = groupby(kw_list, key=lambda x: x[0])
+    
+    # Turn that into a dictionary 
+    kw_dict = {}
+    for key, vals in kw_groups:
+        kw_dict['Tag_' + key] = ', '.join(vl[1].strip() for vl in vals)
+    
+    return kw_dict
+
+
+def validate_folder(image_dir):
+    
+    """Extracts key EXIF data from a folder of images and performs some validation, returning a set
+    of folder level data and image-specific EXIF information.
+    
+    Args:
+        image_dir: A path to a directory of images
+    
+    Returns:
+        A dictionary containing:
+        - folder_data: A dictionary of what should be consistent folder level data, such as the
+          camera details, location and start and stop dates.
+        - image_data: A dictionary of fields of EXIF data for each image in the folder. Keyword
+          tags are separated out into to their own fields. This includes the image name within
+          image_dir.
+        - other_files: A list of non-image files in image_dir
+        - issues: A list of tags flagging any common issues with the directory.
+        - image_dir: The provided directory name
+        - keyword_tags: A list of keyword fields extracted from the IPTC:Keywords data.
+    """
+    
+    # ----------------------------------------------------------------------------------------
+    # Step 1: Identify the files and load exif data 
+    # ----------------------------------------------------------------------------------------
+    
+    # collect issues in a list
+    issues = []
+    
+    # get the files and subset to images
+    files =  next(os.walk(image_dir))[2]
+    images = [fl for fl in files if fl.lower().endswith('jpg')]
+    other_files = set(files) - set(images) 
+    
+    if other_files:
+        issues.append('extra_files')
+    
+    # Bail if there are no image files
+    if not images:
+        issues.append('no_images')
+        return {'issues': issues}
+    
+    # Otherwise get the key tags 
+    target_tags = ["EXIF:Make", "EXIF:Model", "MakerNotes:SerialNumber", "Calib",
+                   "MakerNotes:FirmwareDate", "File:ImageHeight", "File:ImageWidth",
+                   "File:FileName", "EXIF:CreateDate", "EXIF:ExposureTime", "EXIF:ISO",
+                   "EXIF:Flash", "MakerNotes:InfraredIlluminator", "MakerNotes:MotionSensitivity",
+                   "MakerNotes:AmbientTemperature", "EXIF:SceneCaptureType",
+                   "MakerNotes:Sequence", "MakerNotes:TriggerMode", "IPTC:Keywords"]
+    
+    # get an exifread.ExifTool instance
+    et = exiftool.ExifTool()
+    et.start()
+    exif = et.get_tags_batch(target_tags, [os.path.join(image_dir, im) for im in images])
+    et.terminate()
+    
+    # Simplify tag names: convert target_tags to 2-tuples of current name and
+    # simplified name and then sub them in
+    exif_group = re.compile('[A-z]+:')
+    target_tags = [(vl, exif_group.sub('', vl)) for vl in target_tags]
+    
+    for idx, entry in enumerate(exif):
+        exif[idx] = {short_key: entry.get(long_key, None) for long_key, short_key in target_tags}
+    
+    # Convert list of dictionaries to dictionary of list
+    # - use of dict.get(vl, None) above ensures all keys in target_tags are populated for all files
+    n_exif = len(exif)
+    exif_fields = {k: [dic[k] for dic in exif] for k in exif[0]}
+    
+    # ----------------------------------------------------------------------------------------
+    # Step 2: Extract keyword tags
+    # The image tagging process populates the IPTC:Keywords tag with a list of tags that 
+    # need to be expanded out into their own fields in the output.
+    # ----------------------------------------------------------------------------------------
+    
+    if 'Keywords' not in exif_fields or not list(filter(None.__ne__, exif_fields['Keywords'])):
+        issues.append('no_keywords')
+    else:
+        if None in exif_fields['Keywords']:
+            issues.append('missing_keywords')
+        
+        exif_fields['Keywords'] = [_convert_keywords(kw) for kw in exif_fields['Keywords']]
+    
+    # Find the common set of tags, in order to populate the file dictionaries with complete
+    # entries, inserting None for missing tags
+    keyword_tags = [list(d.keys()) for d in exif_fields['Keywords']]
+    keyword_tags = set([tg for tag_list in keyword_tags for tg in tag_list])
+    
+    for kw_tag in keyword_tags:
+        exif_fields[kw_tag] = [tags.get(kw_tag, None) for tags in exif_fields['Keywords']]
+    
+    del exif_fields['Keywords']
+    
+    # ----------------------------------------------------------------------------------------
+    # Step 3: Folder level data checks - things that should be consistent within a folder
+    # ----------------------------------------------------------------------------------------
+    
+    folder_data = {}
+    
+    # a) Check for consistent camera data
+    camera_fields = ['Make', 'Model', 'SerialNumber', 'FirmwareDate', 'ImageHeight', 'ImageWidth']
+    
+    for fld in camera_fields:
+        vals = list(set(exif_fields[fld]))
+        folder_data[fld] = vals
+    
+    if any([len(x) > 1 for x in folder_data.values()]):
+        issues.append("camera_data_inconsistent")
+    
+    if None in [item for sublist in dep_data.values() for item in sublist]:
+        issues.append("camera_data_incomplete")
+    
+    # b) Check location data (the only keyword tag that should be constant within a folder)
+    if 'Tag_15' not in exif_fields:
+        issues.append('no_locations')
+    else:
+        # Get the unique tagged locations
+        tag_loc = list(set(exif_fields['Tag_15']))
+        
+        # Check for missing location tags (Tag_15: None) and remove. Note that Tag_15 won't
+        # be present at all if there are _no_ 15 keyword entries, so there should be something
+        # other than None here.
+        if None in tag_loc:
+            issues.append('missing_locations')
+            tag_loc = list(filter(None.__ne__, tag_loc))
+                
+        if len(tag_loc) > 1:
+            issues.append(f'locations_inconsistent')
+        
+        folder_data['location'] = tag_loc
+    
+    # ----------------------------------------------------------------------------------------
+    # Step 4: Image level data checks - things that are needed for each image
+    # ----------------------------------------------------------------------------------------
+    
+    # a) Check for date information 
+    #    EXIF should have a consistent datetime format: "YYYY:mm:dd HH:MM:SS"
+    if 'CreateDate' not in exif_fields or not list(filter(None.__ne__, exif_fields['CreateDate'])):
+        issues.append('no_dates')
+    else:
+        image_dates = [vl if vl is None else datetime.datetime.strptime(vl, '%Y:%m:%d %H:%M:%S') 
+                       for vl in exif_fields['CreateDate']]
+        
+        # Check for missing dates and date range
+        only_dates = [vl for vl in image_dates if vl is not None]
+        if len(only_dates) < n_exif:
+            issues.append('missing_dates')
+        
+        start_dt = min(only_dates)
+        end_dt = max(only_dates)
+        n_days = (end_dt - start_dt).days + 1
+        folder_data['start'] = start_dt
+        folder_data['end'] = end_dt
+        folder_data['n_days'] = n_days
+    
+    
+    # b) Image sequence information - this is usually in MakerNotes:Sequence but sometimes seems
+    #    to turn up in the file name instead. 
+    
+    # First look for complete data from the EXIF tag, which is in 'n N' format.
+    
+    if 'Sequence' in exif_fields: 
+        exif_sequence = [vl if vl is None else vl.split()[0] for vl in exif_fields['Sequence']]
+    else:
+        exif_sequence = [None] * n_exif
+        
+    if 'Sequence' not in exif_fields or None in exif_fields['Sequence']:
+        # Look for sequence information embedded in the file names
+        regex = re.compile('\d+(?= of \d+)')
+        file_sequence = [regex.search(im) for im in images]
+        file_sequence = [f[0] if fl is not None else None for fl in file_sequence]
+    else:
+        file_sequence = [None] * n_exif
+    
+    # merge with exif sequence data, preferring exif
+    exif_fields['Sequence'] = [xval if xval is not None else fval 
+                               for xval, fval in zip(exif_sequence, file_sequence)]
+    
+    # Look to see if any sequences _still_ missing
+    if None in exif_fields['Sequence']:
+        issues.append('missing_sequence')
+    
+    # Add the number of images
+    folder_data['n_images'] = n_exif
+    
+    # Add image names to image data
+    exif_fields['file'] = images
+    
+    return {'issues': issues, 'folder_data': dep_data, 
+            'image_data': exif_fields, 'other_files': other_files, 
+            'image_dir': image_dir, 'keyword_tags': keyword_tags}
+
+
 def gather_deployment_files(image_dirs, location, calib_dirs=[]):
 
     """Takes a set of image directories and a location name and returns a dictionary of the source
@@ -166,8 +391,6 @@ def gather_deployment_files(image_dirs, location, calib_dirs=[]):
     if len(all_new_file_names) > len(set(all_new_file_names)):
         raise RuntimeError('Duplication found in new image names.')
     
-    # tidy up
-    et.terminate()
     
     return {'files': files, 'date': min(dates), 'location': location, 
             'calib': True if calib_dirs else False}
@@ -454,6 +677,8 @@ def extract_deployment_data(deployment, outfile=None):
     # tidy up
     print(f'Data written to {outfile}', file=sys.stdout, flush=True)
     et.terminate()
+
+
 
 
 """
