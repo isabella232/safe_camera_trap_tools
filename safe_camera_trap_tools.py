@@ -317,7 +317,7 @@ def validate_folder(image_dir):
         # Look for sequence information embedded in the file names
         regex = re.compile('\d+(?= of \d+)')
         file_sequence = [regex.search(im) for im in images]
-        file_sequence = [f[0] if fl is not None else None for fl in file_sequence]
+        file_sequence = [fl[0] if fl is not None else None for fl in file_sequence]
     else:
         file_sequence = [None] * n_exif
     
