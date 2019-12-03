@@ -323,11 +323,13 @@ def gather_deployment_files(image_dirs, calib_dirs=[]):
     if 'DateTimeOriginal' not in all_data or None in all_data['DateTimeOriginal']:
         # a) Must have a date to use
         fatal_errors.append('Missing image creation dates')
+        min_date = None
     elif locations_good:
         
         # b) Construct names
         create_date = [datetime.datetime.strptime(dt, '%Y:%m:%d %H:%M:%S')
                        for dt in all_data['DateTimeOriginal']]
+        min_date = min(create_date)
         
         if None in all_data['Sequence']:
             # If there are missing sequence values, insert dummy ones to disambiguate 
@@ -347,11 +349,13 @@ def gather_deployment_files(image_dirs, calib_dirs=[]):
                 for (idx, dt), ns in zip(vals, new_seq):
                     all_data['Sequence'][idx] = ns
         
-        # Create the new names
+        # Store the formatted dates, create the new names
+        all_data['DateTimeOriginal'] = create_date
         all_data['new_name'] = [f'{folder_locations[0]}_{dt.strftime("%Y%m%d_%H%M%S")}_{seq}.jpg' 
                                 for dt, seq in zip(create_date, all_data['Sequence'])]
         
     return {'all_data': all_data, 
+            'min_date': min_date, 
             'fatal_errors': fatal_errors,
             'location': folder_locations}
 
@@ -361,8 +365,8 @@ def create_deployment(gathered_files, output_root):
     """Takes the output of running `gather_deployment_files` on a set of image folders and copies
     the set of files from the named sources to the new deployment image names within a single
     deployment folder in the 'output_root' directory. The deployment folder name is a combination
-    of the provided 'location' name and the earliest date recorded in the EXIF:CreateDate tags in
-    the images.
+    of the provided 'location' name and the earliest date recorded in the EXIF:DateTimeOriginal
+    tags in the images.
     
     Note that the function **does not delete** the source files when compiling the new deployment
     folder. The original file name of the image is stored in the destination image EXIF data in the
@@ -385,7 +389,7 @@ def create_deployment(gathered_files, output_root):
     
     # get the final directory name and check it doesn't already exist
     all_data = gathered_files['all_data']
-    min_date = min(all_data['CreateDate'])
+    min_date = gathered_files['min_date']
     
     outdir = f"{gathered_files['location']}_{min_date.strftime('%Y%m%d')}"
     outdir = os.path.abspath(os.path.join(output_root, outdir))
