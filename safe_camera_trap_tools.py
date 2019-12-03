@@ -397,7 +397,7 @@ def create_deployment(gathered_files, output_root):
         raise IOError('Output directory already exists:\n    {}'.format(outdir))
     
     os.mkdir(outdir)
-    if any(all_data['calib']):
+    if 'Calib' in all_data and any(all_data['Calib']):
         os.mkdir(os.path.join(outdir, 'CALIB'))
     
     # move the files and insert the original file location into the EXIF metadata
