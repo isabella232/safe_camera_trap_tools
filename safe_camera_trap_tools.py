@@ -412,7 +412,7 @@ def create_deployment(gathered_files, output_root):
     et = exiftool.ExifTool()
     et.start()
     
-    with progressbar.ProgressBar(max_value=len(gathered_files['files'])) as bar:
+    with progressbar.ProgressBar(max_value=len(all_data['src_dir'])) as bar:
         for idx, (src, dst) in enumerate(zip(source_files, dest_files)):
             # Copy the file
             dst = os.path.join(outdir, dst)
