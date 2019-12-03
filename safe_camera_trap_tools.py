@@ -295,6 +295,7 @@ def gather_deployment_files(image_dirs, calib_dirs=[]):
         locations_good = False
     else:
         locations_good = True
+        folder_locations = folder_locations[0]
         
     # 3) Image level data - need to compile this across folders. Adjust so that all the 
     #    image data dictionaries have the same keys and then create one dictionary.
