@@ -352,9 +352,8 @@ def gather_source_directories(image_dirs, calib_dirs=[], location=None):
         # any images with matching timestamps. First, find the date of missing sequences
         # along with their index in the image data 
         if None in all_data['Sequence']:
-            missing_seq = [(idx, dt) 
-                           for idx, (dt, seq) in enumerate(zip(create_date, all_data['Sequence']))
-                           if seq is None]
+            dt_seq = zip(all_data['DateTimeOriginal'], all_data['Sequence'])
+            missing_seq = [(idx, dt)  for idx, (dt, seq) in enumerate(dt_seq) if seq is None]
             
             # Now find groups of shared dates 
             missing_seq.sort(key= lambda x: x[1])
