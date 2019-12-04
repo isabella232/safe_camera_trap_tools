@@ -381,11 +381,8 @@ def gather_source_directories(image_dirs, calib_dirs=[], location=None):
                         for dr, fl in zip(all_data['src_dir'], all_data['File'])]
         files = list(zip(source_files, dest_files))
     
-    return {'fatal_errors': fatal_errors,
-            'files': list(zip(source_files, dest_files)), 
-            'min_date': min_date, 
-            'create_calib': create_calib,
-            'dep_dir': dep_dir}
+    return {'fatal_errors': fatal_errors, 'files': files,  'min_date': min_date, 
+            'create_calib': create_calib, 'dep_dir': dep_dir}
 
 
 def create_deployment(gathered_files, output_root):
