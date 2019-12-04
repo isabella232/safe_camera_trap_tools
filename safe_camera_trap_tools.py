@@ -369,7 +369,7 @@ def gather_source_directories(image_dirs, calib_dirs=[], location=None):
         # Get the earliest image creation date
         min_date = min([dt['min_date'] for dt in dir_data])
         
-        # Create the new standard file names
+        # Create the new standard file names and package into a list of (src, dest) tuples
         dep_dir = f"{location}_{min_date.strftime('%Y%m%d')}"
         create_calib = True if calib_dirs else False
         
@@ -377,9 +377,9 @@ def gather_source_directories(image_dirs, calib_dirs=[], location=None):
                       for dt, seq in zip(all_data['DateTimeOriginal'], all_data['Sequence'])]
         dest_files = [os.path.join('CALIB', fl) if cl else fl
                       for fl, cl in zip(dest_files, all_data['calib'])]
-        
         source_files = [os.path.join(dr,fl) 
                         for dr, fl in zip(all_data['src_dir'], all_data['File'])]
+        files = list(zip(source_files, dest_files))
     
     return {'fatal_errors': fatal_errors,
             'files': list(zip(source_files, dest_files)), 
