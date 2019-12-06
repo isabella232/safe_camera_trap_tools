@@ -133,12 +133,13 @@ class Deployment():
             A boolean indicating success or failure
         """
 
-        if not self.images:
-            raise RuntimeError('No images in deployment')
-
         # reset previous attempts
         self.location = location
         self.compilation_errors = []
+
+        if not self.images:
+            self.compilation_errors.append('No images in deployment')
+            return False
 
         # Load the validation data for the images
         validate_tags = [DATEFIELD, "MakerNotes:Sequence", "IPTC:Keywords"]
@@ -149,7 +150,7 @@ class Deployment():
         # Get dates and check they are complete
         self._get_dates()
         if None in self.dates:
-            self.compilation_errors.extend(['Missing dates'])
+            self.compilation_errors.append('Missing dates')
 
         # Check location data
         if 'Keyword_15' not in self.kw_tags:
@@ -164,15 +165,15 @@ class Deployment():
         loc_error = []
 
         if n_loc > 1:
-            loc_error = [f"Inconsistent source locations: {','.join(real_exif_locations)}"]
+            loc_error = f"Inconsistent source locations: {','.join(real_exif_locations)}"
         elif self.location is not None and n_loc == 1 and real_exif_locations[0] != self.location:
-            loc_error = [f"Location {self.location} does not match EXIF {real_exif_locations[0]}"]
+            loc_error = f"Location {self.location} does not match EXIF {real_exif_locations[0]}"
         elif self.location is None and n_loc == 0:
-            loc_error = ['No location tags in files and no location argument provided']
+            loc_error = 'No location tags in files and no location argument provided'
         elif self.location is None:
             self.location = real_exif_locations[0]
 
-        self.compilation_errors.extend(loc_error)
+        self.compilation_errors.append(loc_error)
 
         # Get image sequence information:
         # 1) Get data from the EXIF tag, which is in 'n N' format.
@@ -570,7 +571,7 @@ class Deployment():
 
             keyword_tags = list(zip(keyword_tags, keyword_ld, keyword_bd))
             keyword_tags.sort(key=lambda x: (x[1], x[2]))
-            keyword_tags = [tg[0] for tg in keyword_tags]
+            keyword_tags = [tg[0][0] for tg in keyword_tags]
 
             # Get the str version of the keyword tags
             keyword_tags_str = ['Keyword_' + str(kw_tag) for kw_tag in keyword_tags]
