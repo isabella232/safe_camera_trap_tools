@@ -1,7 +1,7 @@
 import os
 import re
 from itertools import groupby
-import safe_camera_trap_tools as sctt
+from safe_camera_trap_tools import Deployment
 
 # Phil's folders are arranged as:
 # /201X/Block/Loc
@@ -44,6 +44,7 @@ for ky, gp in groupby(zip(image_group, image_folders), key=lambda x: x[0]):
 # Now process each group
 for ky, dirs in groups.items():
     
+    print(f'PROCESSING {ky}')
     # separate in image and calib directories
     image_dirs, calib_dirs = [], []
     for d in dirs:
@@ -59,9 +60,12 @@ for ky, dirs in groups.items():
     if not os.path.exists(outdir):
         os.mkdir(outdir)
     
-    gathered = sctt.gather_deployment_files(image_dirs, location, calib_dirs=calib_dirs)
-    deployment_dir = sctt.create_deployment(gathered, output_root=outdir)
-    
-    # These files have already been annotated, so extract the deployment data
-    # into the deployment folder
-    sctt.extract_deployment_data(deployment_dir)
+    depl = Deployment(image_dirs=image_dirs, calib_dirs=calib_dirs)
+    compilable = depl.check_compilable(location=location)
+    if compilable:
+        compiled_to = depl.compile(output_root=outdir)
+        depl = Deployment(deployment=compiled_to)
+        depl.extract_data()
+    else:
+        print(f"FAILED: {', '.join(depl.compilation_errors)}")
+        
