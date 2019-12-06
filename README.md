@@ -27,7 +27,7 @@ pip install progressbar2
 
 The package contains two core functions: `process_deployment` and `extract_deployment_data`. Both functions are available from within python for use in programs and scripts and as stand-alone command line tools. In fact, `process_deployment` is a simple wrapper around 2 functions: `gather_deployment_files` collects information on the files to be collated and `create_deployment` does the job of copying the files into the new location. These are separate functions within the module to provide flexibility (such as creating annual subfolders) but bundled together in the command line interface.
 
-## process_deployment
+## `process_deployment`
 
 A **deployment** is simply the whole process of putting out a camera trap in a single location for a period of time. This could be for a few days or could be for a month, but this is the basic organisational unit: a location and a time period.
 
@@ -154,7 +154,7 @@ F100-1-1_20160518_202258_4.jpg
 F100-1-1_20160518_202259_5.jpg
 ```
 
-## `extract_deployment_data`
+## `extract_exif_data`
 
 This extracts EXIF data from the images and calibration images within a deployment folder and creates a text output file containing key EXIF fields. In particular, it looks for the `IPTC:Keywords` tag. This field is used to store image annotation data, following a set of numeric tags, for example `15: F100-1-1` records the location, `1: Crested Fireback` records a species in an image and `24: Phil` records that Phil Chapman assessed the image.
 

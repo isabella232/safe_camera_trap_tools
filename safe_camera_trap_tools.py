@@ -1,7 +1,12 @@
+"""This module provides the Deployment class, used to manipulate and export data from SAFE
+Project camera trap images. It also contains two wrapper functions to carry out data extraction
+and deployment that are exposed as command line entry points in the setup.
+"""
+
 import os
 import sys
 import argparse
-import datetime
+from datetime import datetime
 import csv
 import shutil
 from itertools import groupby
@@ -11,609 +16,562 @@ import re
 import exiftool
 import progressbar
 
+DATEFIELD = 'EXIF:DateTimeOriginal'
 
-# TODO - Figure out how to share the docstrings between the functions and their CLI wrappers
+class Deployment():
+    """The Deployment class
 
-def _convert_keywords(keywords):
-    
-    """ Unpacks a list of EXIF keywords into a dictionary. The keywords are strings with the format
-    'tag_number: value', where tag number can be repeated. The process below combines duplicate tag
-    numbers and strips whitespace padding.
-    
-    For example:
-        ['15: E100-2-23', '16: Person', '16: Setup', '24: Phil']
-    goes to
-        {'Tag_15': 'E100-2-23', 'Tag_16': 'Person, Setup', 'Tag_24': 'Phil'}
+    This class collects camera trap images from a set of directories and provides methods to:
+        1. extract a standard set of EXIF fields from the images,
+        2. check that the images and their EXIF data contain enough information to compile
+           them into a standard deployment folder format, and
+        3. create a compiled deployment folder by copying loaded images.
     """
-    
-    if keywords is None:
-        return {}
-    
-    if isinstance(keywords, str):
-        keywords = [keywords]
-    
-    # Split the strings on colons
-    kw_list = [kw.split(':') for kw in keywords]
-    
-    # Sort and group on tag number
-    kw_list.sort(key=lambda x: x[0])
-    kw_groups = groupby(kw_list, key=lambda x: x[0])
-    
-    # Turn that into a dictionary 
-    kw_dict = {}
-    for key, vals in kw_groups:
-        kw_dict['Tag_' + key] = ', '.join(vl[1].strip() for vl in vals)
-    
-    return kw_dict
 
+    def __init__(self, image_dirs=None, calib_dirs=None, deployment=None):
 
-def _unpack_keywords(exif_fields):
-    """
-    Tries to unpack the IPTC:Keywords tag in a set of EXIF data from a single field into
-    a set of new fields by keyword tag number.
-    
-    Returns:
-        A tuple of the status of the attempt, the possibly updated exif_fields and a
-        list of the unpacked keyword tag field names.
-    """
-    
-    if 'Keywords' not in exif_fields or all(x is None for x in exif_fields['Keywords']):
-        status = 'no_keywords'
-        keyword_tags = []
-    else:
-        if None in exif_fields['Keywords']:
-            status = 'missing_keywords'
-        else:
-            status = 'keywords_complete'
-        
-        # Convert from list to dict
-        exif_fields['Keywords'] = [_convert_keywords(kw) for kw in exif_fields['Keywords']]
-    
-        # Find the common set of tags, in order to populate the file dictionaries with complete
-        # entries, inserting None for missing tags
-        keyword_tags = [list(d.keys()) for d in exif_fields['Keywords']]
-        keyword_tags = set([tg for tag_list in keyword_tags for tg in tag_list])
-    
-        for kw_tag in keyword_tags:
-            exif_fields[kw_tag] = [tags.get(kw_tag, None) for tags in exif_fields['Keywords']]
-    
-    if 'Keywords' in exif_fields:
-        del exif_fields['Keywords']
-    
-    return status, exif_fields, keyword_tags
+        self.images = []
+        self.calib = []
+        self.sequence = []
+        self.dates = []
+        self.other_files = []
+        self.loaded_tags = []
+        self.exif_fields = None
+        self.kw_tags = []
+        self.location = None
+        self.compilable = False
+        self.compilation_errors = []
+        self.deployment = ''
+        self.image_dirs = []
+        self.calib_dirs = []
 
+        # Check the inputs:
+        if deployment is not None and (image_dirs or calib_dirs):
+            raise ValueError('Provide one of deployment or directory lists, not both')
 
-def _read_exif(files, tags):
-    
-    """
-    Function to read a set of EXIF tags from a list of files.
-    
-    Args:
-        files: A list of file names
-        tags: A list of EXIF tag names. These are shortened to remove EXIF group prefixes.
-    
-    Returns:
-        A dictionary keyed by tag of lists of file values for that tag. Empty tags are filled
-        with None.
-    """
-    
-    # get an exifread.ExifTool instance and read
-    et = exiftool.ExifTool()
-    et.start()
-    exif = et.get_tags_batch(tags, files)
-    et.terminate()
-    
-    # Simplify tag names: convert target_tags to 2-tuples of current name and
-    # simplified name and then sub them in
-    exif_group = re.compile('[A-z]+:')
-    tags = [(vl, exif_group.sub('', vl)) for vl in tags]
-    
-    for idx, entry in enumerate(exif):
-        exif[idx] = {short_key: entry.get(long_key, None) for long_key, short_key in tags}
-    
-    # Convert list of dictionaries to dictionary of list
-    # - use of dict.get(vl, None) above ensures all keys in target_tags are 
-    #   populated for all files
-    exif_fields = {k: [dic[k] for dic in exif] for k in exif[0]}
-    
-    return exif_fields
+        if deployment is not None:
+            # Check the deployment exists
+            if not os.path.exists(deployment) and os.path.isdir(deployment):
+                raise IOError('Deployment directory not found or not a directory')
 
+            image_dirs = [deployment]
 
-def _merge_dir_exif(dir_data):
-    """
-    Takes a list of dictionaries of exif data fields for files and combines them to give a single
-    dictionary including all common keys and filling in None as required.
-    
-    Args:
-        dir_data: A list of dictionaries of EXIF data for different folders, where each entry
-            is a list of particular tag values for a set of files.
-    
-    Returns:
-        A single dictionary containing 
-    """
-    
-    keys = []
-    for dt in dir_data:
-        keys.extend(list(dt.keys()))
-    
-    # Get the set of unique keys across folders
-    keys = set(keys)
-    all_data = {ky: [] for ky in keys}
-    
-    # Compile, filling with None for missing fields within a folder
-    for dt in dir_data:
-        n_entries = len(dt[list(dt)[0]])
-        for ky in keys: 
-            if ky in dt:
-                vals = dt[ky]
+            # Check the internal structure seems like a standard deployment
+            deployment_subdirs = next(os.walk(deployment))[1]
+            if deployment_subdirs == ['CALIB'] or len(deployment_subdirs) == 0:
+                calib_dirs = [os.path.join(deployment, 'CALIB')]
             else:
-                vals = [None] * n_entries
-            
-            all_data[ky].extend(vals)
-    
-    return all_data
+                raise IOError('Deployment directory contains unexpected directories')
 
+            self.deployment = deployment
 
-def validate_source_directory(src_dir):
-    
-    """Checks to see if the images in a directory can be compiled into a deployment. The function
-    only checks for very simple consistency and data availability. Images in a deployment are 
-    named by deployment location, the date time of the image and a sequence number to discriminate
-    burst photos with the same time. The location is expected to be stored as Tag 15 in the image
-    keywords. 
-    
-    The information reported on the components of the standard image names: 
-        - image date: there must be an EXIF:DateTimeOriginal entry for every file and this is
-          reported in the returned dictionary as 'dates_complete'
-        - location: the function collects a list of unique tags, which might be [None]
-        - image sequence: The function reads any EXIF sequence data and supplements that with 
-          filename sequence data if the EXIF sequence is missing or incomplete.
-    Args:
-        src_dir: A path to a directory of images
-    
-    Returns:
-        A dictionary containing:
-        - exif_fields: A dictionary of fields of EXIF data for each image in the folder. Keyword
-          tags are separated out into to their own fields. This includes the image name within
-          the provided source directory as 'File'.
-        - other_files: A list of non-image files in image_dir.
-        - src_dir: The provided directory name
-        - image_location: A list of the location data recorded as Tag_15 values.
-        - image_date_pass: A boolean indicating if complete image data is available
-        - n_images: An integer giving the number of images found
-    """
-    
-    # default failure values
-    image_date_pass = False
-    exif_fields = {}
-    image_location = []
-    min_date = None
-    
-    # get the files and subset to images
-    files =  next(os.walk(src_dir))[2]
-    images = [fl for fl in files if fl.lower().endswith('jpg')]
-    n_images = len(images)
-    other_files = list(set(files) - set(images))
-    
-    if images:
-        
-        # Get the key tags for validation: 
-        target_tags = ["EXIF:DateTimeOriginal", "MakerNotes:Sequence", "IPTC:Keywords"]
-        images_with_path = [os.path.join(src_dir, im) for im in images]
-        exif_fields = _read_exif(images_with_path, target_tags)
-        keyword_status, exif_fields, kw_tags = _unpack_keywords(exif_fields)
-        
+        # If the instance is passed image and calibration directories, populate them.
+        for im_dir in image_dirs:
+            self.add_directory(im_dir)
+
+        for cl_dir in calib_dirs:
+            self.add_directory(cl_dir, True)
+
+    def __str__(self):
+
+        n_image = len(self.images)
+        n_calib = sum(self.calib)
+
+        if self.deployment:
+            return (f"A standard deployment containing {n_image - n_calib} images "
+                    f"and {n_calib} calibration images")
+
+        return (f"A set of {n_image - n_calib} images and {n_calib} calibration images "
+                f"from {len(self.image_dirs)} image directories and "
+                f"{len(self.calib_dirs)} calibration directories")
+
+    def add_directory(self, src_dir, calib=False):
+        """Adds the JPEG images in a directory to a deployment, optionally flagging them
+        as calibration images.
+
+        Args:
+            src_dir: A path to a folder containing camera trap JPEG images
+            calib: A boolean indicating if these are calibration images
+        """
+
+        if not os.path.exists(src_dir) and os.path.isdir(src_dir):
+            raise IOError(f'Path does not exist or is not a directory: {src_dir}')
+
+        files = next(os.walk(src_dir))[2]
+        images = [fl for fl in files if fl.lower().endswith('jpg')]
+        n_images = len(images)
+        other_files = list(set(files) - set(images))
+        calib_vals = [calib] * n_images
+
+        self.images.extend([os.path.join(src_dir, im) for im in images])
+        self.calib.extend(calib_vals)
+        self.other_files.extend(other_files)
+
+        if calib:
+            self.calib_dirs.extend([src_dir])
+        else:
+            self.image_dirs.extend([src_dir])
+
+    def check_compilable(self, location=None):
+
+        """Check if the images in a deployment can be compiled into a standard deployment.
+
+        This method checks if the images loaded in a Deployment instance can be compiled into
+        a deployment directory. This is simply ensuring that there is enough information to
+        create standard camera trap image names: "location_YYYYMMDD_HHMMSS_N.jpg". So, for all
+        images loaded into a Deployment:
+            - There must be an EXIF:DateTimeOriginal entry in the EXIF data for every file.
+            - Any location tags in the images must be consistent. These are stored in the
+              IPTC:Keywords EXIF data with the '15' tag. Missing location tags are acceptable.
+            - image sequence: The function reads any EXIF sequence data and supplements that with
+              filename sequence data if the EXIF sequence is missing or incomplete.
+
+        A location can be provided and is necessary if _no_ image contains location information.
+        Provided locations are checked for consistency with EXIF locations.
+
+        Returns:
+            A boolean indicating success or failure
+        """
+
+        if not self.images:
+            raise RuntimeError('No images in deployment')
+
+        # reset previous attempts
+        self.location = location
+        self.compilation_errors = []
+
+        # Load the validation data for the images
+        validate_tags = [DATEFIELD, "MakerNotes:Sequence", "IPTC:Keywords"]
+        self.exif_fields = self._read_exif(self.images, validate_tags)
+        self.loaded_tags = validate_tags
+        self._unpack_keywords()
+
+        # Get dates and check they are complete
+        self._get_dates()
+        if None in self.dates:
+            self.compilation_errors.extend(['Missing dates'])
+
         # Check location data
-        if 'Tag_15' not in exif_fields or all(x is None for x in exif_fields['Tag_15']):
-            image_location = [None]
+        if 'Keyword_15' not in self.kw_tags:
+            exif_locations = set([None])
+        elif all(x is None for x in self.exif_fields['Keyword_15']):
+            exif_locations = set([None])
         else:
-            image_location = list(set(exif_fields['Tag_15']))
-        
-        # Check for date information: EXIF should have a consistent datetime 
-        # format of "YYYY:mm:dd HH:MM:SS"
-        dt_fld = 'DateTimeOriginal'
-        if dt_fld in exif_fields and None not in exif_fields[dt_fld]:
-            exif_fields[dt_fld] = [datetime.datetime.strptime(vl, '%Y:%m:%d %H:%M:%S') 
-                                   for vl in exif_fields[dt_fld]]
-            min_date = min(exif_fields[dt_fld])
-            image_date_pass = True
-        
-        # Image sequence information - this is usually in MakerNotes:Sequence but sometimes is 
-        # included in the file name instead. 
-        
-        # First look for complete data from the EXIF tag, which is in 'n N' format.
-        if 'Sequence' in exif_fields: 
-            exif_sequence = [vl if vl is None else vl.split()[0] for vl in exif_fields['Sequence']]
-        else:
-            exif_sequence = [None] * n_images
-        
-        if 'Sequence' not in exif_fields or None in exif_fields['Sequence']:
-            # Look for sequence information embedded in the file names as 'n of N' and extract n
+            exif_locations = set(self.exif_fields['Keyword_15'])
+
+        real_exif_locations = list(exif_locations - set([None]))
+        n_loc = len(real_exif_locations)
+        loc_error = []
+
+        if n_loc > 1:
+            loc_error = [f"Inconsistent source locations: {','.join(real_exif_locations)}"]
+        elif self.location is not None and n_loc == 1 and real_exif_locations[0] != self.location:
+            loc_error = [f"Location {self.location} does not match EXIF {real_exif_locations[0]}"]
+        elif self.location is None and n_loc == 0:
+            loc_error = ['No location tags in files and no location argument provided']
+        elif self.location is None:
+            self.location = real_exif_locations[0]
+
+        self.compilation_errors.extend(loc_error)
+
+        # Get image sequence information:
+        # 1) Get data from the EXIF tag, which is in 'n N' format.
+        exif_sequence = [vl if vl is None else vl.split()[0]
+                         for vl in self.exif_fields['MakerNotes:Sequence']]
+
+        # 2) If needed, supplement with sequence information embedded in the file names as
+        #    'n of N' and extract n
+        if None in exif_sequence:
             regex = re.compile('\d+(?= of \d+)')
-            file_sequence = [regex.search(im) for im in images]
+            file_sequence = [regex.search(im) for im in self.images]
             file_sequence = [fl[0] if fl is not None else None for fl in file_sequence]
-        else:
-            file_sequence = [None] * n_images
-        
-        # merge with exif sequence data, preferring exif
-        exif_fields['Sequence'] = [xval if xval is not None else fval 
-                                   for xval, fval in zip(exif_sequence, file_sequence)]
-        
-        # Add image names to image data
-        exif_fields['File'] = images
-    
-    return {'exif_fields': exif_fields,
-            'src_dir': src_dir,
-            'other_files': other_files,
-            'image_location': image_location,
-            'image_date_pass': image_date_pass,
-            'n_images': n_images,
-            'min_date': min_date}
 
+            # merge with exif sequence data, preferring exif
+            exif_sequence = [xval if xval is not None else fval
+                             for xval, fval in zip(exif_sequence, file_sequence)]
 
-def gather_source_directories(image_dirs, calib_dirs=[], location=None):
-    
-    """Takes a set of source directories and checks they can be compiled into a single deployment.
-    The function compiles information across the directories and checks the following criteria:
-    
-    - Do all files have an original creation date (EXIF:DateTimeOriginal)?
-    - Are any location tags in the Keywords compatible? All or some of the values can be missing 
-      but provided values cannot be inconsistent. 
-    - Does the image have an image sequence number? This function will insert an artificial 
-      sequence number if one cannot be recovered from the file itself.
-    
-    Optionally, a list of directories containing calibration images can also be provided, to be 
-    stored in a 'CALIB' directory within the deployment directory. These are also checked to see
-    if they pass the criteria.
-    
-    The location name is used in the destination file name and the deployment directory name, so
-    users can provide a location to be used if no location tag are provided. If tags are provided
-    the function will check that these are consistent with any provided location.
-    
-    If successful, the function returns a dictionary of the source and destination file name pairs,
-    the earliest recorded image creation date (which is used to label the deployment and store 
-    deployments by year) and the location.
-    
-    Args:
-        image_dirs: A list of directories containing camera trap images
-        calib_dirs: An optional list of directories of calibration images.
-        location: A string giving a location for the images.
-    
-    Returns: 
-        A dictionary:
-        - fatal_errors: A list of errors that mean these folder do not pass the check criteria
-        - files: A list of (src, dest) tuples. 
-        - min_date: The earliest date across files, used to name the deployment folder.
-        - dep_dir: The name for the deployment directory to be created
-        - create_calib: A boolean flag showing whether the deployment will have a subdirectory
-          for calibration images.
-    """
-    
-    fatal_errors = []
-    
-    # Process the sets of directories into a list, flagging calibration folders
-    dir_data = []
-    for clb, src_dirs in [(False, image_dirs), (True, calib_dirs)]: 
-        for src_dir in src_dirs:
-            dat = validate_source_directory(src_dir)
-            dat['exif_fields']['src_dir'] = [dat['src_dir']] * dat['n_images']
-            dat['exif_fields']['calib'] = [clb] * dat['n_images']
-            dir_data.append(dat)
-    
-    # Location data - this is frequently incomplete in not only calib folders (which probably
-    # don't get manually tagged) but also in image folders, where you might expect at least a
-    # location tag in each image. So, we can't accept inconsistent tags but we accept a 
-    # mixture of a single location tag and None or all None and a provided location.
-    
-    folder_locations = [dt['image_location'] for dt in dir_data]
-    folder_locations = [item for sublist in folder_locations for item in sublist]
-    non_null_folder_locations = list(set(folder_locations) - set([None]))
-    n_loc = len(non_null_folder_locations)
-    
-    if n_loc > 1:
-        locations_pass = False
-        fatal_errors.append(f"Inconsistent source locations: {','.join(non_null_folder_locations)}")
-    elif location is not None and n_loc == 1 and non_null_folder_locations[0] != location:
-        locations_pass = False
-        fatal_errors.append(f'Location argument {location} not consistent with source ' 
-                            f'{non_null_folder_locations[0]}')
-    elif location is None and n_loc == 0:
-        locations_pass = False
-        fatal_errors.append('No location tags in files and no location argument provided')
-    else:
-        # At this point, we either have one location tag in the files that matches 
-        # any provided tag or no tags in files and a non null location.
-        locations_pass = True
-        if n_loc == 1 and location is None:
-            location = non_null_folder_locations[0]
-    
-    # Creation date
-    image_date_pass = [dt['image_date_pass'] for dt in dir_data]
-    
-    if not all(image_date_pass):
-        image_date_pass = False
-        fatal_errors.append('Missing dates')
-    else:
-        image_date_pass = True
-    
-    # Check to see if files can be copied, updating these default failure values
-    files = []
-    min_date = None
-    dep_dir = None
-    create_calib = False
-    
-    if image_date_pass and locations_pass:
-        
-        # Merge the exif data across the source directories
-        exif_data = [dt['exif_fields'] for dt in dir_data]
-        all_data = _merge_dir_exif(exif_data)
-        
-        # If there are missing sequence values, insert dummy ones to disambiguate 
-        # any images with matching timestamps. First, find the date of missing sequences
-        # along with their index in the image data 
-        if None in all_data['Sequence']:
-            dt_seq = zip(all_data['DateTimeOriginal'], all_data['Sequence'])
+        # 3) Lastly, if all the dates are available, make one up.
+        if None not in self.dates and None in exif_sequence:
+            # Find the datetimes of missing sequence values
+            dt_seq = zip(self.dates, exif_sequence)
             missing_seq = [(idx, dt)  for idx, (dt, seq) in enumerate(dt_seq) if seq is None]
-            
-            # Now find groups of shared dates 
-            missing_seq.sort(key= lambda x: x[1])
-            missing_seq = groupby(missing_seq, key= lambda x: x[1])
-            for gp, vals in missing_seq:
+
+            # Now find groups of shared dates
+            missing_seq.sort(key=lambda x: x[1])
+            missing_seq = groupby(missing_seq, key=lambda x: x[1])
+            for grp, vals in missing_seq:
+                # Create a dummy sequence (X1, X2, ..., Xn) for this datetime to replace None
                 vals = list(vals)
-                # Create a dummy sequence for this datetime and insert it instead of the None values
                 new_seq = ['X' + str(n + 1) for n in range(len(vals))]
-                for (idx, dt), ns in zip(vals, new_seq):
-                    all_data['Sequence'][idx] = ns
-        
-        # Get the earliest image creation date
-        min_date = min([dt['min_date'] for dt in dir_data])
-        
-        # Create the new standard file names and package into a list of (src, dest) tuples
-        dep_dir = f"{location}_{min_date.strftime('%Y%m%d')}"
-        create_calib = True if calib_dirs else False
-        
-        dest_files = [f'{location}_{dt.strftime("%Y%m%d_%H%M%S")}_{seq}.jpg' 
-                      for dt, seq in zip(all_data['DateTimeOriginal'], all_data['Sequence'])]
-        dest_files = [os.path.join('CALIB', fl) if cl else fl
-                      for fl, cl in zip(dest_files, all_data['calib'])]
-        source_files = [os.path.join(dr,fl) 
-                        for dr, fl in zip(all_data['src_dir'], all_data['File'])]
-        files = list(zip(source_files, dest_files))
-    
-    return {'fatal_errors': fatal_errors, 'files': files,  'min_date': min_date, 
-            'create_calib': create_calib, 'dep_dir': dep_dir}
+                for (idx, date), new_seq in zip(vals, new_seq):
+                    exif_sequence[idx] = new_seq
+
+        self.sequence = exif_sequence
+
+        if self.compilation_errors:
+            print(f"Compilation failed: {','.join(self.compilation_errors)}",
+                  file=sys.stdout, flush=True)
+            return False
+
+        self.compilable = True
+        return True
+
+    def compile(self, output_root):
+
+        """Compile a set of images into a standard deployment directory.
+
+        Once a set of images have passed check_compilable, this function copies all of the
+        source files into a new deployment directory. Note that the function **does not delete**
+        the source files when compiling the new deployment folder. The original file name of the
+        image is stored in the destination image EXIF data in the XMP:PreservedFileName tag.
+
+        Args:
+            output_root: The location to compile the deployment folder.
+
+        Returns:
+            The name of the compiled deployment folder
+        """
+
+        if not self.compilable and not self.compilation_errors:
+            raise RuntimeError("check_compilable has not been run")
+
+        if not self.compilable:
+            raise RuntimeError(f"Compilation failed : {', '.join(self.compilation_errors)}")
+
+        # check the output root directory
+        if not os.path.isdir(output_root):
+            raise IOError('Output root directory not found')
+
+        # create the deployment directory
+        deployment_dir = f"{self.location}_{min(self.dates).strftime('%Y%m%d')}"
+        dep_path = os.path.abspath(os.path.join(output_root, deployment_dir))
+
+        if os.path.exists(dep_path):
+            raise IOError(f'Output directory already exists: {deployment_dir}')
+
+        os.mkdir(dep_path)
+
+        # Get the destination file names
+        dest_files = [f'{self.location}_{dt.strftime("%Y%m%d_%H%M%S")}_{seq}.jpg'
+                      for dt, seq in zip(self.dates, self.sequence)]
+
+        # Create a calib directory if needed and extend the path for those images
+        if True in self.calib:
+            os.mkdir(os.path.join(dep_path, 'CALIB'))
+            dest_files = [os.path.join('CALIB', fl) if cl else fl
+                          for fl, cl in zip(dest_files, self.calib)]
+
+        # Move the files and insert the original file location into the EXIF metadata
+        print('Copying files:\n', file=sys.stdout, flush=True)
+
+        # get an exifread.ExifTool instance to insert the original filename
+        extl = exiftool.ExifTool()
+        extl.start()
+
+        with progressbar.ProgressBar(max_value=len(self.images)) as prog_bar:
+            for idx, (src, dst) in enumerate(zip(self.images, dest_files)):
+                # Copy the file
+                dst = os.path.join(dep_path, dst)
+                shutil.copyfile(src, dst)
+                # Insert original file name into EXIF data. The execute method needs byte inputs.
+                tag_data = f'-XMP-xmpMM:PreservedFileName={src}'
+                extl.execute(b'-overwrite_original', tag_data.encode('utf-8'),
+                             exiftool.fsencode(dst))
+                prog_bar.update(idx)
+
+        # tidy up
+        extl.terminate()
+
+        return dep_path
+
+    def extract_data(self, outfile=None):
+        """Extract EXIF data from images in a deployment
+
+        Extracts the key EXIF data from a deployment, creating a tab-delimited output file
+        holding image level data with a short header of deployment level data. If the
+        instance is of a standard deployment (created by using Deployment(deployment=path))
+        then the outfile defaults to 'exif_dat.dat' within the deployment folder. Otherwise
+        an outfile has to be provided, since the image and calib folder structures are unknown.
+
+        For a standard deployment, the output file includes file names relative to the
+        deployment folder but for images loaded using image_dirs and calib_dirs, full paths are
+        reported.
+
+        Args:
+            outfile: A path to a file to hold the extracted data as tab delimited text.
+        """
+
+        if len(self.images) == 0:
+            raise RuntimeError('No images loaded in deployment')
+
+        # Get the output folder
+        if outfile is None and self.deployment:
+            outfile = os.path.join(self.deployment, 'exif_data.dat')
+        elif outfile is None:
+            raise ValueError('Need to provide outfile.')
+
+        print('Extracting EXIF data ', file=sys.stdout, flush=True)
+
+        # Find images, extract EXIF data and flag as non-calibration images
+        # Reduce to tags used in rest of the script, filling in blanks and simplifying tag names
+        camera_tags = ['EXIF:Make', 'EXIF:Model', 'MakerNotes:SerialNumber',
+                       'MakerNotes:FirmwareDate', 'File:ImageHeight', 'File:ImageWidth']
+        image_tags = ["File:FileName", "EXIF:DateTimeOriginal", "EXIF:ExposureTime",
+                      "EXIF:ISO", "EXIF:Flash", "MakerNotes:InfraredIlluminator",
+                      "MakerNotes:MotionSensitivity", "MakerNotes:AmbientTemperature",
+                      "EXIF:SceneCaptureType", "MakerNotes:Sequence", "MakerNotes:TriggerMode",
+                      'IPTC:Keywords']
+        target_tags = camera_tags + image_tags
+
+        self.exif_fields = self._read_exif(self.images, target_tags)
+        self.loaded_tags = target_tags
+        self._unpack_keywords()
+
+        # REPORTING AND VALIDATION
+        # DEPLOYMENT level data
+        print('Checking for consistent deployment data', file=sys.stdout, flush=True)
+        dep_data = OrderedDict()
+
+        # A) Check for consistent camera data
+        for long_tg, short_tg in self._strip_exif_groups(camera_tags):
+            vals = set(self.exif_fields[long_tg])
+            vals = ['NA' if vl is None else vl for vl in vals]
+            n_vals = len(vals)
+            dep_data[short_tg] = ', '.join([str(v) for v in vals])
+
+            if n_vals > 1:
+                print(f"  ! {short_tg} is not consistent: {vals}", file=sys.stderr, flush=True)
 
 
-def create_deployment(gathered_files, output_root):
-    
-    """Takes the output of running `gather_deployment_files` on a set of image folders and copies
-    the set of files from the named sources to the new deployment image names within a single
-    deployment folder in the 'output_root' directory. The deployment folder name is a combination
-    of the provided 'location' name and the earliest date recorded in the EXIF:DateTimeOriginal
-    tags in the images.
-    
-    Note that the function **does not delete** the source files when compiling the new deployment
-    folder. The original file name of the image is stored in the destination image EXIF data in the
-    PreservedFileName tag.
-    
-    Args:
-        gathered_files: The output of running `gather_deployment_files`
-        output_root: The location to compile the deployment folder to
-    
-    Returns:
-        The name of the resulting deployment directory
-    """
-    
-    if gathered_files['fatal_errors']:
-        raise RuntimeError('Gathered files contain fatal errors')
-    
-    # check the output root directory
-    if not os.path.isdir(output_root):
-        raise IOError('Output root directory not found')
-    
-    dep_dir = gathered_files['dep_dir']
-    dep_path = os.path.abspath(os.path.join(output_root, dep_dir))
-    if os.path.exists(dep_path):
-        raise IOError(f'Output directory already exists: {dep_dir}')
-    
-    os.mkdir(dep_path)
-    if gathered_files['create_calib']:
-        os.mkdir(os.path.join(dep_path, 'CALIB'))
-    
-    # move the files and insert the original file location into the EXIF metadata
-    print('Copying files:\n', file=sys.stdout, flush=True)
-    
-    # get an exifread.ExifTool instance to insert the original filename
-    et = exiftool.ExifTool()
-    et.start()
-    
-    with progressbar.ProgressBar(max_value=len(gathered_files['files'])) as bar:
-        for idx, (src, dst) in enumerate(gathered_files['files']):
-            # Copy the file
-            dst = os.path.join(dep_path, dst)
-            shutil.copyfile(src, dst)
-            # Insert original file name into EXIF data
-            tag_data = f'-XMP-xmpMM:PreservedFileName={src}'
-            et.execute(b'-overwrite_original', tag_data.encode('utf-8'), exiftool.fsencode(dst))
-            bar.update(idx)
-    
-    # tidy up
-    et.terminate()
-    
-    return dep_path
+        # B) Extract date information and put it back in the exif data
+        self._get_dates()
+        self.exif_fields[DATEFIELD] = self.dates
 
+        # check completeness
+        date_bad = [vl is None for vl in self.dates]
+        valid_dates = [vl for vl in self.dates if vl is not None]
+        n_img = len(self.images)
 
-def extract_deployment_data(deployment, outfile=None):
-
-    """Extracts the key EXIF data from a deployment folder, creating a tab-delimited output file
-    holding image level data with a short header of deployment level data.
-    
-    Args:
-        deployment: A path to a deployment directory
-        outfile: A path to a file to hold the extracted data as tab delimited text,
-            defaulting to saving the data as 'exif_data.dat' within the deployment 
-            directory
-    """
-    
-    # Collect the main directory and any calibration directory into a list, using a 
-    # tuple to store a flag for the calib directory
-    exif_dirs = []
-    if not os.path.exists(deployment) and os.path.isdir(deployment):
-        raise IOError('Deployment path does not exist or is not a directory.')
-    else:
-        exif_dirs.append((False, deployment))
-    
-    calib_dir = os.path.join(deployment, 'CALIB')
-    if os.path.exists(calib_dir) and os.path.isdir(calib_dir):
-        exif_dirs.append((True, calib_dir))
-    
-    # Get the output folder
-    if outfile is None:
-        outfile = os.path.join(deployment, 'exif_data.dat')
-    
-    print(f'Extracting EXIF data from {deployment}', file=sys.stdout, flush=True)
-    
-    # Find images, extract EXIF data and flag as non-calibration images
-    # Reduce to tags used in rest of the script, filling in blanks and simplifying tag names
-    target_tags = ['EXIF:Make', 'EXIF:Model', 'MakerNotes:SerialNumber', 'Calib',
-                   'MakerNotes:FirmwareDate', 'File:ImageHeight', 'File:ImageWidth',
-                   "File:FileName", "EXIF:DateTimeOriginal", "EXIF:ExposureTime", "EXIF:ISO",
-                   "EXIF:Flash", "MakerNotes:InfraredIlluminator", "MakerNotes:MotionSensitivity",
-                   "MakerNotes:AmbientTemperature", "EXIF:SceneCaptureType",
-                   "MakerNotes:Sequence", "MakerNotes:TriggerMode", 'IPTC:Keywords']
-    
-    exif = []
-    keyword_tags = set()
-    for calib_flag, this_dir in exif_dirs:
-        # Get the JPEG files
-        images = os.listdir(this_dir)
-        images = [im for im in images if im.lower().endswith('.jpg')]
-        
-        # If there are any images, get the exif data, flag as calib or not and add to the pile
-        if images:
-            images = [os.path.join(this_dir, im) for im in images]
-            exif_fields = _read_exif(images, target_tags)
-            keyword_status, exif_fields, kw_tags = _unpack_keywords(exif_fields)
-            keyword_tags.update(kw_tags)
-            
-            exif_fields['Calib'] = [calib_flag] * len(images)
-            exif.append(exif_fields)
-    
-    if len(exif) == 0:
-        print(f'No images found in {deployment}', file=sys.stdout, flush=True)
-        return None
-    else:
-        exif_fields = _merge_dir_exif(exif)
-        n_exif = len(exif_fields[list(exif_fields)[0]])
-    
-    # REPORTING AND VALIDATION 
-    # DEPLOYMENT level data
-    print('Checking for consistent deployment data', file=sys.stdout, flush=True)
-    dep_data = OrderedDict()
-    
-    # A) Check for consistent camera data
-    camera_fields = ['Make', 'Model', 'SerialNumber', 'FirmwareDate',
-                     'ImageHeight', 'ImageWidth']
-    
-    for fld in camera_fields:
-        vals = set(exif_fields[fld])
-        if len(vals) > 1:
-            vals = ', '.join(vals)
-            print(f"  ! {fld} is not consistent: {vals}", file=sys.stderr, flush=True)
+        if all(date_bad):
+            print('  ! No {DATEFIELD} tags found', file=sys.stderr, flush=True)
         else:
-            vals = list(vals)[0]
-        
-        dep_data[fld] = vals
-    
-    # B) Check for date information 
-    #    EXIF should have a consistent datetime format: "YYYY:mm:dd HH:MM:SS"
-    image_dates = [datetime.datetime.strptime(vl, '%Y:%m:%d %H:%M:%S') 
-                   for vl in exif_fields['DateTimeOriginal'] if vl is not None]
-    
-    if not image_dates:
-        print('  ! No DateTimeOriginal tags found', file=sys.stderr, flush=True )
-    else:
-        # get the date range
-        start_dt = min(image_dates)
-        end_dt = max(image_dates)
-        n_days = (end_dt - start_dt).days + 1
-        dep_data['start'] = str(start_dt)
-        dep_data['end'] = str(end_dt)
-        dep_data['n_days'] = n_days
-        
-        # report on missing dates
-        n_dates = len(image_dates)
-        if n_dates < n_exif:
-            print(f'  ! DateTimeOriginal tags not complete: {n_dates}/{n_exif}', 
-                  file=sys.stderr, flush=True)
-            dep_data['n_missing_dates'] = n_exif - n_dates
-    
-    # C) Check location data (only keyword tag that should be constant)
-    if 'Tag_15' not in exif_fields:
-        print('  ! No location tags (15) found', file=sys.stderr, flush=True)
-    else:
-        # Get the unique tagged locations
-        locations = set(exif_fields['Tag_15'])
-        
-        # Check for missing location tags (Tag_15: None) and remove
-        if None in locations:
-            print(f'  ! Some images lack location tags.', file=sys.stderr, flush=True)
-            locations = list(filter(None.__ne__, locations))
-        
-        # Are they consistent with the deployment folder
-        match_folder = [os.path.basename(deployment).startswith(l) for l in locations]
-        
-        if len(locations) > 1:
-            locations = ', '.join(locations)
-            print(f'  ! Location tags (15) not internally consistent: {locations}',
-                  file=sys.stderr, flush=True)
+            if any(date_bad):
+                print(f'  ! {DATEFIELD} tags not complete: {n_img - sum(date_bad)}/n_img',
+                      file=sys.stderr, flush=True)
+
+            # get the date range
+            start_dt = min(valid_dates)
+            end_dt = max(valid_dates)
+            n_days = (end_dt - start_dt).days + 1
+            dep_data['start'] = str(start_dt)
+            dep_data['end'] = str(end_dt)
+            dep_data['n_days'] = n_days
+
+        # C) Check location data (only keyword tag that should be constant)
+        if 'Keyword_15' not in self.kw_tags:
+            print('  ! No location tags (15) found', file=sys.stderr, flush=True)
         else:
-            locations = list(locations)[0]
-        
-        if not any(match_folder):
-            print('  ! Location tags (15) do not match deployment folder.',
-                  file=sys.stderr, flush=True)
-        
-        dep_data['location'] = locations
-    
-    # Add the number of images
-    dep_data['n_images'] = n_exif - sum(exif_fields['Calib'])
-    dep_data['n_calib'] = n_exif - dep_data['n_images']
-    
-    # print to screen to report
-    print('Deployment data:', file=sys.stdout, flush=True)
-    dep_lines = [f'{ky}: {vl}' for ky, vl in dep_data.items()]
-    print(*['    ' + d +'\n' for d in dep_lines], file=sys.stdout, flush=True)
-    
-    # IMAGE level data
-    # report on keyword tag completeness:
-    if not keyword_tags:
-        print(' ! No Image keyword tags found', file=sys.stderr, flush=True)
-    else:
-        print('Image tag counts:', file=sys.stdout, flush=True)
-        for kywd in keyword_tags:
-            n_found = sum([vl is not None for vl in exif_fields[kywd]])
-            print(f'    {kywd:10}{n_found:6}', file=sys.stdout, flush=True)
-    
-    # WRITE data to files
-    with open(outfile, 'w') as outf:
-        # Header containing constant deployment data
-        outf.writelines(ln + '\n' for ln in dep_lines)
-        outf.write('---\n')
-    
-    with open(outfile, 'a') as outf:
-        # Tab delimited table of image data
-        writer = csv.writer(outf, delimiter='\t', lineterminator='\n')
-        data = zip(*exif_fields.values())
-        writer.writerow(exif_fields.keys())
-        writer.writerows(data)
-    
-    # tidy up
-    print(f'Data written to {outfile}', file=sys.stdout, flush=True)
+            # Get the unique tagged locations
+            locations = set(self.exif_fields['Keyword_15'])
+
+            # Check for missing location tags (Keyword_15: None) and remove
+            if None in locations:
+                print(f'  ! Some images lack location tags.', file=sys.stderr, flush=True)
+                locations -= set(None)
+
+            if len(locations) > 1:
+                locations = ', '.join(locations)
+                print(f'  ! Location tags (15) not internally consistent: {locations}',
+                      file=sys.stderr, flush=True)
+            else:
+                locations = list(locations)[0]
+
+            # Are they consistent with the deployment folder
+            if self.deployment:
+                match_folder = [os.path.basename(self.deployment).startswith(l) for l in locations]
+
+                if not any(match_folder):
+                    print('  ! Location tags (15) do not match deployment folder.',
+                          file=sys.stderr, flush=True)
+
+            dep_data['location'] = locations
+
+        # Add the number of images
+        dep_data['n_images'] = n_img - sum(self.calib)
+        dep_data['n_calib'] = sum(self.calib)
+
+        # print to screen to report
+        print('Deployment data:', file=sys.stdout, flush=True)
+        dep_lines = [f'{ky}: {vl}' for ky, vl in dep_data.items()]
+        print(*['    ' + d +'\n' for d in dep_lines], file=sys.stdout, flush=True)
+
+        # IMAGE level data
+        # report on keyword tag completeness:
+        if not self.kw_tags:
+            print(' ! No Image keyword tags found', file=sys.stderr, flush=True)
+        else:
+            print('Image tag counts:', file=sys.stdout, flush=True)
+            for tag in self.kw_tags:
+                n_found = sum([vl is not None for vl in self.exif_fields[tag]])
+                print(f'    {tag:10}{n_found:6}', file=sys.stdout, flush=True)
+
+        # WRITE data to files
+        with open(outfile, 'w') as outf:
+            # Header containing constant deployment data
+            outf.write(f'Header length: {len(dep_lines) + 1}\n')
+            outf.writelines(ln + '\n' for ln in dep_lines)
+
+        with open(outfile, 'a') as outf:
+            # Tab delimited table of image data
+            writer = csv.writer(outf, delimiter='\t', lineterminator='\n')
+
+            # Insert file name and calib status into dictionary
+            if self.deployment:
+                file_names = [os.path.basename(im) for im in self.images]
+                file_names = [os.path.join('CALIB', im) if cl else im
+                              for im, cl in zip(file_names, self.calib)]
+            else:
+                file_names = [os.path.abspath(im) for im in self.images]
+
+            output_data = OrderedDict([('File', file_names), ('Calib', self.calib)])
+
+            # Add the fields to the output data directory, stripping EXIF groups
+            tags = self._strip_exif_groups(self.exif_fields)
+            for long_tag, short_tag in tags:
+                output_data[short_tag] = self.exif_fields[long_tag]
+
+            data = zip(*output_data.values())
+            writer.writerow(output_data.keys())
+            writer.writerows(data)
+
+        # tidy up
+        print(f'Data written to {outfile}', file=sys.stdout, flush=True)
+
+    @staticmethod
+    def _strip_exif_groups(tags):
+        """Simplifies tag names by stripping EXIF groups. It converts a list of tags to a list
+        of 2-tuples of provided and simplified names.
+        """
+
+        exif_group = re.compile('[A-z]+:')
+        tags = [(vl, exif_group.sub('', vl)) for vl in tags]
+
+        return tags
+
+    @staticmethod
+    def _convert_keywords(keywords):
+        """Unpacks a list of EXIF keywords into a dictionary.
+
+        The keywords are integers, where the tag numbers can be repeated. The process below
+        combines duplicate tag numbers and strips whitespace padding. For example:
+            ['15: E100-2-23', '16: Person', '16: Setup', '24: Phil']
+        goes to
+            {15: 'E100-2-23', 16: 'Person, Setup', 24: 'Phil'}
+
+        Returns:
+            A dictionary of keyword values.
+        """
+
+        if keywords is None:
+            return {}
+
+        if isinstance(keywords, str):
+            keywords = [keywords]
+
+        # Split the strings on colons
+        kw_list = [kw.split(':') for kw in keywords]
+
+        # Sort and group on tag number
+        kw_list.sort(key=lambda x: x[0])
+        kw_groups = groupby(kw_list, key=lambda x: x[0])
+
+        # Turn that into a dictionary
+        kw_dict = {}
+        for key, vals in kw_groups:
+            kw_dict[int(key)] = ', '.join(vl[1].strip() for vl in vals)
+
+        return kw_dict
+
+    @staticmethod
+    def _read_exif(files, tags):
+        """Read EXIF tags for a list of files.
+
+        It returns an ordered dictionary, ordered by the original tag list, of EXIF tag values
+        for each of the provided files. Empty tags for a file and tags that are missing completely
+        across all files are filled with None.
+
+        Args:
+            files: A list of file names
+            tags: A list of EXIF tag names. These are shortened to remove EXIF group prefixes.
+
+        Returns:
+            An ordered dict keyed by tag names.
+        """
+
+        # get an exifread.ExifTool instance and read, which returns a list of dictionaries
+        # of tag values by file
+        extl = exiftool.ExifTool()
+        extl.start()
+        exif = extl.get_tags_batch(tags, files)
+        extl.terminate()
+
+        # Convert list of dictionaries to a dictionary of lists, using OrderedDict to
+        # preserve the field order of the tags when the data is written to file.
+        exif_fields = OrderedDict([(tg, [dic.get(tg, None) for dic in exif]) for  tg in tags])
+
+        return exif_fields
+
+    def _get_dates(self):
+        """Converts EXIF dates to datetime.datetime and stores in self.dates"""
+
+        if not self.exif_fields:
+            raise RuntimeError('No EXIF data loaded')
+        if DATEFIELD not in self.exif_fields:
+            raise RuntimeError(f'{DATEFIELD} not in loaded EXIF data')
+
+        # EXIF should have a consistent datetime format of "YYYY:mm:dd HH:MM:SS"
+        self.dates = [datetime.strptime(vl, '%Y:%m:%d %H:%M:%S') if vl is not None else None
+                      for vl in self.exif_fields[DATEFIELD]]
+
+    def _unpack_keywords(self):
+        """Unpack EXIF keywords
+
+        Unpacks the IPTC:Keywords tag in data loaded into self.exif_fields into new fields
+        keyed by keyword tag number n as 'Keyword_n'. If there is no Keywords field, exif_fields
+        is unchanged; otherwise the keyword tags are added at the end in numeric order and the
+        Keywords fields is removed. It also populates the self.kw_tags attribute with the
+        resulting keyword field keys.
+        """
+
+        kw_field = 'IPTC:Keywords'
+
+        if kw_field in self.exif_fields or any(x is not None for x in self.exif_fields[kw_field]):
+
+            # Convert the entries from a list to a dict keyed by tag
+            kw_data = [self._convert_keywords(kw) for kw in self.exif_fields[kw_field]]
+
+            # Find the common set of tags in numeric order
+            keyword_tags = [list(d.keys()) for d in kw_data]
+            keyword_tags = list({tg for tag_list in keyword_tags for tg in tag_list})
+            keyword_tags.sort()
+
+            # Get the str version of the keyword tags
+            keyword_tags_str = ['Keyword_' + str(kw_tag) for kw_tag in keyword_tags]
+            keyword_tags = list(zip(keyword_tags, keyword_tags_str))
+
+            # Extract the data for each tag from each file and add in order to self.exif_fields,
+            # using dict.get(ky, None) to fill in missing tags
+            for kw_num, kw_str in keyword_tags:
+                self.exif_fields[kw_str] = [rw.get(kw_num, None) for rw in kw_data]
+
+            self.kw_tags = keyword_tags_str
+
+        if kw_field in self.exif_fields:
+            del self.exif_fields[kw_field]
 
 
 """
-Command line interfaces to the two functions
+Command line interfaces
 """
 
 
@@ -621,56 +579,72 @@ def _process_deployment_cli():
 
     """
     Compiles folders of images collected from a camera trap into a single deployment folder in
-    the 'output_root' directory. The deployment folder name is a combination of the provided
-    'location' name and the earliest date recorded in the EXIF:CreateDate tags in the images. A set
+    the 'output_root' directory. The deployment folder name is a combination of the location
+    name and the earliest date recorded in the EXIF:DateTimeOriginal tags in the images. A set
     of folders of calibration images can also be provided, which are moved into a single CALIB
     directory within the new deployment directory.
-    
+
+    A location name can be provided. This will be checked to see if it is consistent with any
+    stored locations in the image keywords. If no location tags are present in the images, then
+    a location must be provided to generate the deployment directory name, otherwise the location
+    used in the image tags can be used.
+
     Note that the function **does not delete** the source files when compiling the new deployment
     folder.
     """
-    
+
     desc = textwrap.dedent(_process_deployment_cli.__doc__)
     fmt = argparse.RawDescriptionHelpFormatter
     parser = argparse.ArgumentParser(description=desc, formatter_class=fmt)
-    
-    parser.add_argument('location', type=str, 
-                        help='A SAFE location code from the gazetteer that will be '
-                             'used in the folder and file names.')
-    parser.add_argument('output_root', type=str, 
+
+    parser.add_argument('output_root', type=str,
                         help='A path to the directory where the deployment folder '
                              'is to be created.')
-    parser.add_argument('directories', metavar='dir', type=str, nargs='+',
-                        help='Paths for each directory to be included in the deployment folder.')
+    parser.add_argument('images', metavar='dir', type=str, nargs='+',
+                        help='Paths for each image directory to be included.')
     parser.add_argument('-c', '--calib', default=None, type=str, action='append',
                         help='A path to a folder of calibration images. Can be repeated to '
                              'provide more than one folder of calibration images.')
-    
+    parser.add_argument('-l', '--location', type=str, default=None,
+                        help='A SAFE location code to be checked against any location tags '
+                             'tags in the images and used for the deployment folder.')
+
     args = parser.parse_args()
-    
-    gathered = gather_deployment_files(image_dirs=args.directories, calib_dirs=args.calib,
-                                       location=args.location)
-    create_deployment(gathered, output_root=args.output_root)
+
+    dep = Deployment(image_dirs=args.directories, calib_dirs=args.calib)
+    can_compile = dep.check_compilable(location=args.location)
+
+    if can_compile:
+        dep.compile(output_root=args.output_root)
 
 
-def _extract_deployment_data_cli():
+def _extract_exif_data_cli():
 
     """
-    This script takes a single deployment folder and extracts EXIF data for the deployment
-    into a tab delimited file. By default, the data is written to a file `exif_data.dat` 
-    within the deployment directory.
+    This script extracts EXIF data from camera trap images. The most common use is with a single
+    standard deployment directory, but EXIF data can also be read from a set of image and
+    calibration directories. Data is written into a tab delimited file: for standard deployments
+    the data is written by default to a file `exif_data.dat` within the deployment directory. If
+    multiple directories are provided, an output file has to be provided.
     """
-    
-    desc = textwrap.dedent(_extract_deployment_data_cli.__doc__)
+
+    desc = textwrap.dedent(_extract_exif_data_cli.__doc__)
     fmt = argparse.RawDescriptionHelpFormatter
     parser = argparse.ArgumentParser(description=desc, formatter_class=fmt)
-    
-    parser.add_argument('deployment',
+
+    parser.add_argument('deployment', nargs='?',
                         help='A path to a deployment directory')
     parser.add_argument('-o', '--outfile', default=None,
                         help='An output file name')
+    parser.add_argument('-i', '--image_dir', default=[], type=str, action='append',
+                        help='A path to a folder of images. Can be repeated to '
+                             'provide more than one folder of images.')
+    parser.add_argument('-c', '--calib_dir', default=[], type=str, action='append',
+                        help='A path to a folder of calibration images. Can be repeated to '
+                             'provide more than one folder of calibration images.')
 
     args = parser.parse_args()
 
-    extract_deployment_data(deployment=args.deployment, outfile=args.outfile)
-
+    dep = Deployment(image_dirs=args.image_dirs, calib_dirs=args.calib_dirs,
+                     deployment=args.deployment)
+    dep.extract_data(outfile=args.outfile)
