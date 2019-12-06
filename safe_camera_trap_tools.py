@@ -66,11 +66,13 @@ class Deployment():
             self.deployment = deployment
 
         # If the instance is passed image and calibration directories, populate them.
-        for im_dir in image_dirs:
-            self.add_directory(im_dir)
-
-        for cl_dir in calib_dirs:
-            self.add_directory(cl_dir, True)
+        if image_dirs is not None:
+            for im_dir in image_dirs:
+                self.add_directory(im_dir)
+        
+        if calib_dirs is not None:
+            for cl_dir in calib_dirs:
+                self.add_directory(cl_dir, True)
 
     def __str__(self):
 
@@ -162,7 +164,7 @@ class Deployment():
 
         real_exif_locations = list(exif_locations - set([None]))
         n_loc = len(real_exif_locations)
-        loc_error = []
+        loc_error = None
 
         if n_loc > 1:
             loc_error = f"Inconsistent source locations: {','.join(real_exif_locations)}"
@@ -172,8 +174,9 @@ class Deployment():
             loc_error = 'No location tags in files and no location argument provided'
         elif self.location is None:
             self.location = real_exif_locations[0]
-
-        self.compilation_errors.append(loc_error)
+        
+        if loc_error is not None:
+            self.compilation_errors.append(loc_error)
 
         # Get image sequence information:
         # 1) Get data from the EXIF tag, which is in 'n N' format.
@@ -571,7 +574,7 @@ class Deployment():
 
             keyword_tags = list(zip(keyword_tags, keyword_ld, keyword_bd))
             keyword_tags.sort(key=lambda x: (x[1], x[2]))
-            keyword_tags = [tg[0][0] for tg in keyword_tags]
+            keyword_tags = [tg[0] for tg in keyword_tags]
 
             # Get the str version of the keyword tags
             keyword_tags_str = ['Keyword_' + str(kw_tag) for kw_tag in keyword_tags]
@@ -618,7 +621,7 @@ def _process_deployment_cli():
     parser.add_argument('output_root', type=str,
                         help='A path to the directory where the deployment folder '
                              'is to be created.')
-    parser.add_argument('images', metavar='dir', type=str, nargs='+',
+    parser.add_argument('images', type=str, nargs='+',
                         help='Paths for each image directory to be included.')
     parser.add_argument('-c', '--calib', default=None, type=str, action='append',
                         help='A path to a folder of calibration images. Can be repeated to '
@@ -629,7 +632,7 @@ def _process_deployment_cli():
 
     args = parser.parse_args()
 
-    dep = Deployment(image_dirs=args.directories, calib_dirs=args.calib)
+    dep = Deployment(image_dirs=args.images, calib_dirs=args.calib)
     can_compile = dep.check_compilable(location=args.location)
 
     if can_compile:
@@ -654,10 +657,10 @@ def _extract_exif_data_cli():
                         help='A path to a deployment directory')
     parser.add_argument('-o', '--outfile', default=None,
                         help='An output file name')
-    parser.add_argument('-i', '--image_dir', default=[], type=str, action='append',
+    parser.add_argument('-i', '--image_dirs', default=[], type=str, action='append',
                         help='A path to a folder of images. Can be repeated to '
                              'provide more than one folder of images.')
-    parser.add_argument('-c', '--calib_dir', default=[], type=str, action='append',
+    parser.add_argument('-c', '--calib_dirs', default=[], type=str, action='append',
                         help='A path to a folder of calibration images. Can be repeated to '
                              'provide more than one folder of calibration images.')
 
