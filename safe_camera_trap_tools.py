@@ -488,7 +488,7 @@ class Deployment():
         # Turn that into a dictionary
         kw_dict = {}
         for key, vals in kw_groups:
-            kw_dict[int(key)] = ', '.join(vl[1].strip() for vl in vals)
+            kw_dict[key] = ', '.join(vl[1].strip() for vl in vals)
 
         return kw_dict
 
@@ -550,10 +550,27 @@ class Deployment():
             # Convert the entries from a list to a dict keyed by tag
             kw_data = [self._convert_keywords(kw) for kw in self.exif_fields[kw_field]]
 
-            # Find the common set of tags in numeric order
+            # Find the common set
             keyword_tags = [list(d.keys()) for d in kw_data]
             keyword_tags = list({tg for tag_list in keyword_tags for tg in tag_list})
-            keyword_tags.sort()
+
+            # now sort into numeric order for clean reporting. Mostly, tags are integer
+            # but there are sometimes bracketed values, e.g. 1(2)
+            leading_digits = re.compile('^\d+')
+            bracketed_digit = re.compile('(?<=\()\d+(?=\))')
+
+            keyword_ld = [leading_digits.search(x) for x in keyword_tags]
+            keyword_bd = [bracketed_digit.search(x) for x in keyword_tags]
+
+            if any([vl is None for vl in keyword_ld]):
+                raise ValueError(f"Could not parse keyword tags: {', '.join(keyword_tags)}")
+
+            keyword_ld = [int(x[0]) for x in keyword_ld]
+            keyword_bd = [int(x[0]) if x is not None else 0 for x in keyword_bd]
+
+            keyword_tags = list(zip(keyword_tags, keyword_ld, keyword_bd))
+            keyword_tags.sort(key=lambda x: (x[1], x[2]))
+            keyword_tags = [tg[0] for tg in keyword_tags]
 
             # Get the str version of the keyword tags
             keyword_tags_str = ['Keyword_' + str(kw_tag) for kw_tag in keyword_tags]
