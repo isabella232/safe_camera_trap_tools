@@ -377,7 +377,7 @@ class Deployment():
             # Check for missing location tags (Keyword_15: None) and remove
             if None in locations:
                 print(f'  ! Some images lack location tags.', file=sys.stderr, flush=True)
-                locations -= set(None)
+                locations -= set([None])
 
             if len(locations) > 1:
                 locations = ', '.join(locations)
