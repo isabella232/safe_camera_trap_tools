@@ -534,9 +534,19 @@ class Deployment():
             raise RuntimeError('No EXIF data loaded')
         if DATEFIELD not in self.exif_fields:
             raise RuntimeError(f'{DATEFIELD} not in loaded EXIF data')
-
+        
         # EXIF should have a consistent datetime format of "YYYY:mm:dd HH:MM:SS"
-        self.dates = [datetime.strptime(vl, '%Y:%m:%d %H:%M:%S') if vl is not None else None
+        # but we do need to handle corrupt dates.
+        def _date_conv(dt):
+            
+            try:
+                dt = datetime.strptime(dt, '%Y:%m:%d %H:%M:%S')
+            except ValueError:
+                dt = None
+            
+            return dt
+        
+        self.dates = [_date_conv(vl) if vl is not None else None
                       for vl in self.exif_fields[DATEFIELD]]
 
     def _unpack_keywords(self):
