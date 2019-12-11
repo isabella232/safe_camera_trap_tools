@@ -58,7 +58,9 @@ class Deployment():
 
             # Check the internal structure seems like a standard deployment
             deployment_subdirs = next(os.walk(deployment))[1]
-            if deployment_subdirs == ['CALIB'] or len(deployment_subdirs) == 0:
+            if len(deployment_subdirs) == 0:
+                pass
+            elif deployment_subdirs == ['CALIB']:
                 calib_dirs = [os.path.join(deployment, 'CALIB')]
             else:
                 raise IOError('Deployment directory contains unexpected directories')
