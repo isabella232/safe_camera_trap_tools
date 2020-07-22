@@ -28,7 +28,7 @@ class Deployment():
         3. create a compiled deployment folder by copying loaded images.
     """
 
-    def __init__(self, image_dirs=None, calib_dirs=None, deployment=None):
+    def __init__(self, image_dirs=None, calib_dirs=None, deployment=None, tag_map={}):
 
         self.images = []
         self.calib = []
@@ -44,7 +44,8 @@ class Deployment():
         self.deployment = ''
         self.image_dirs = []
         self.calib_dirs = []
-
+        self.tag_map = tag_map
+        
         # Check the inputs:
         if deployment is not None and (image_dirs or calib_dirs):
             raise ValueError('Provide one of deployment or directory lists, not both')
@@ -464,8 +465,7 @@ class Deployment():
 
         return tags
 
-    @staticmethod
-    def _convert_keywords(keywords):
+    def _convert_keywords(self, keywords):
         """Unpacks a list of EXIF keywords into a dictionary.
 
         The keywords are integers, where the tag numbers can be repeated. The process below
@@ -483,10 +483,18 @@ class Deployment():
 
         if isinstance(keywords, str):
             keywords = [keywords]
-
+        
+        # Convert non-standard tags
+        keywords = [self.tag_map[kw] if kw in self.tag_map else kw for kw in keywords]
+        
         # Split the strings on colons
         kw_list = [kw.split(':') for kw in keywords]
-
+        
+        # Look for problems
+        problems = [kw[0] for kw in kw_list if len(kw) != 2]
+        if problems:
+            raise RuntimeError(f'Bad tags - adjust tag_map: {",".join(problems)}')
+        
         # Sort and group on tag number
         kw_list.sort(key=lambda x: x[0])
         kw_groups = groupby(kw_list, key=lambda x: x[0])
