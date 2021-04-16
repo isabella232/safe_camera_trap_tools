@@ -28,7 +28,7 @@ class Deployment():
         3. create a compiled deployment folder by copying loaded images.
     """
 
-    def __init__(self, image_dirs=None, calib_dirs=None, deployment=None, tag_map={}):
+    def __init__(self, image_dirs=None, calib_dirs=None, deployment=None):
 
         self.images = []
         self.calib = []
@@ -44,7 +44,6 @@ class Deployment():
         self.deployment = ''
         self.image_dirs = []
         self.calib_dirs = []
-        self.tag_map = tag_map
         
         # Check the inputs:
         if deployment is not None and (image_dirs or calib_dirs):
@@ -468,11 +467,21 @@ class Deployment():
     def _convert_keywords(self, keywords):
         """Unpacks a list of EXIF keywords into a dictionary.
 
-        The keywords are integers, where the tag numbers can be repeated. The process below
-        combines duplicate tag numbers and strips whitespace padding. For example:
+        Keywords come in as a string:
+        
+        '15: E100-2-23,16: Person,16: Setup,24: Phil'
+        
+        This is made up of sets of tagged values using kw: val. The formatting of
+        the data is somewhat software dependent, but comma separation seems pretty 
+        reliable. That is problematic though if value _includes_ commas. So, this 
+        function uses regular expressions to identify kw: and split on that. Tag 
+        numbers can be repeated so the process below also combines duplicate tag 
+        numbers and strips whitespace padding. 
+        
+        For example:
             ['15: E100-2-23', '16: Person', '16: Setup', '24: Phil']
         goes to
-            {15: 'E100-2-23', 16: 'Person, Setup', 24: 'Phil'}
+            {15: 'E100-2-23', 16: 'Person,Setup', 24: 'Phil'}
 
         Returns:
             A dictionary of keyword values.
@@ -480,21 +489,34 @@ class Deployment():
 
         if keywords is None:
             return {}
+        
+        # Use regex to find tags, including leading commas and spaces, using
+        # groups to keep elements separate. The content of the tag is more variable
+        # than is optimal. It was initially integers, then integer.integer appeared.
+        # This could be extended but sticking with numeric for the moment.
+        tag_regex = re.compile('([ ,]?)([0-9.]+)(:)')
+        tag_regex_out = list(tag_regex.finditer(keywords))
+        
+        # extract tag identity
+        tags = [t.groups()[1] for t in tag_regex_out]
+        
+        # extract values
+        tagspan = [t.span() for t in tag_regex_out] + [(len(keywords), None)]
+        values = [keywords[start:end] for ((_, start), (end, _)) in zip(tagspan, tagspan[1:])]
+        
+        kw_list = list(zip(tags, values))
+        
+        # TODO - haven't thought through error checking deeply - one obvious issue is
+        # colons with non standard tags.
 
-        if isinstance(keywords, str):
-            keywords = [keywords]
-        
-        # Convert non-standard tags
-        keywords = [self.tag_map[kw] if kw in self.tag_map else kw for kw in keywords]
-        
-        # Split the strings on colons
-        kw_list = [kw.split(':') for kw in keywords]
-        
         # Look for problems
-        problems = [kw[0] for kw in kw_list if len(kw) != 2]
+        problems = [val for kw, val in kw_list if ':' in val]
         if problems:
-            raise RuntimeError(f'Bad tags - adjust tag_map: {",".join(problems)}')
+            raise RuntimeError(f'Bad tags - non-numeric tags in input: {",".join(problems)}')
         
+        # # Convert non-standard tags - TODO reimplement some kind of mapping if needed?
+        # keywords = [self.tag_map[kw] if kw in self.tag_map else kw for kw in keywords]
+
         # Sort and group on tag number
         kw_list.sort(key=lambda x: x[0])
         kw_groups = groupby(kw_list, key=lambda x: x[0])
